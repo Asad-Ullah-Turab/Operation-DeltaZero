@@ -1,15 +1,25 @@
-import * as CANNON from 'cannon-es';
-import * as THREE from 'three';
+import RAPIER from '@dimforge/rapier3d-compat';
 
-export interface PhysicsContext {
-  world: CANNON.World;
-  playerMaterial: CANNON.Material;
-  worldMaterial: CANNON.Material;
+export const GROUND_WIDTH = 100;
+export const GROUND_DEPTH = 100;
+export const GROUND_THICKNESS = 1.0;
+
+export const PLAYER_RADIUS = 0.55;
+export const PLAYER_HALF_HEIGHT = 0.85;
+export const PLAYER_HEIGHT = PLAYER_HALF_HEIGHT * 2;
+
+export interface ObstacleBoxSpec {
+  width: number;
+  height: number;
+  depth: number;
+  x: number;
+  y: number;
+  z: number;
 }
 
 /**
- * Deterministic pseudo-random generator (Mulberry32) so all LAN clients
- * generate identical static obstacle positions and sizes.
+ * Deterministic PRNG (Mulberry32) so all clients generate the exact same
+ * static obstacle coordinates without extra network overhead.
  */
 function createSeededRandom(seed: number): () => number {
   let state = seed;
@@ -23,172 +33,158 @@ function createSeededRandom(seed: number): () => number {
 }
 
 /**
- * Initializes the Cannon-es physics world, materials, ground plane,
- * and static box obstacles synced with the Three.js scene.
+ * Generates deterministic static box specifications for the map.
  */
-export function initPhysics(scene: THREE.Scene): PhysicsContext {
-  const world = new CANNON.World({
-    gravity: new CANNON.Vec3(0, -22, 0), // Snappy gravity for responsive jumping
-  });
-
-  // Broadphase & solver tuning
-  world.broadphase = new CANNON.SAPBroadphase(world);
-  world.allowSleep = false;
-
-  // Zero-friction contact between player cylinder and world prevents sticking to box walls
-  const worldMaterial = new CANNON.Material('worldMaterial');
-  const playerMaterial = new CANNON.Material('playerMaterial');
-
-  const playerWorldContact = new CANNON.ContactMaterial(
-    playerMaterial,
-    worldMaterial,
-    {
-      friction: 0.0,
-      restitution: 0.0,
-    }
-  );
-  world.addContactMaterial(playerWorldContact);
-
-  // --- 1. Static Ground Plane ---
-  const groundBody = new CANNON.Body({
-    mass: 0, // mass = 0 makes the body static
-    shape: new CANNON.Plane(),
-    material: worldMaterial,
-  });
-  // Rotate Cannon plane so its normal points up along +Y
-  groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
-  world.addBody(groundBody);
-
-  // Visual Ground Mesh
-  const groundGeo = new THREE.PlaneGeometry(120, 120);
-  const groundMat = new THREE.MeshStandardMaterial({
-    color: 0x1e293b,
-    roughness: 0.85,
-    metalness: 0.1,
-  });
-  const groundMesh = new THREE.Mesh(groundGeo, groundMat);
-  groundMesh.rotation.x = -Math.PI / 2;
-  groundMesh.receiveShadow = true;
-  scene.add(groundMesh);
-
-  // Subtle grid helper for depth and speed perception
-  const grid = new THREE.GridHelper(120, 60, 0x475569, 0x334155);
-  grid.position.y = 0.01;
-  scene.add(grid);
-
-  // --- 2. Static Box Obstacles ---
-  createStaticBoxes(world, scene, worldMaterial);
-
-  return {
-    world,
-    playerMaterial,
-    worldMaterial,
-  };
-}
-
-/**
- * Helper to spawn a single static box in both Three.js and Cannon-es.
- */
-function addStaticBox(
-  world: CANNON.World,
-  scene: THREE.Scene,
-  material: CANNON.Material,
-  width: number,
-  height: number,
-  depth: number,
-  x: number,
-  y: number,
-  z: number,
-  color: number
-): void {
-  // Cannon-es Box takes half-extents (width/2, height/2, depth/2)
-  const halfExtents = new CANNON.Vec3(width / 2, height / 2, depth / 2);
-  const body = new CANNON.Body({
-    mass: 0, // Static obstacle
-    shape: new CANNON.Box(halfExtents),
-    position: new CANNON.Vec3(x, y, z),
-    material,
-  });
-  world.addBody(body);
-
-  // Corresponding Three.js visual mesh
-  const geometry = new THREE.BoxGeometry(width, height, depth);
-  const meshMaterial = new THREE.MeshStandardMaterial({
-    color,
-    roughness: 0.6,
-    metalness: 0.15,
-  });
-  const mesh = new THREE.Mesh(geometry, meshMaterial);
-  mesh.position.set(x, y, z);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  scene.add(mesh);
-}
-
-/**
- * Generates a deterministic set of static 3D boxes across the arena
- * for jumping and collision testing.
- */
-function createStaticBoxes(
-  world: CANNON.World,
-  scene: THREE.Scene,
-  worldMaterial: CANNON.Material
-): void {
-  const rand = createSeededRandom(1337);
-  const boxColors = [0x64748b, 0x475569, 0x0284c7, 0x0d9488, 0x6366f1];
-
-  // A structured stepping-stone staircase near the center to test platforming
-  const steps = [
-    { w: 3, h: 0.8, d: 3, x: 6, z: 0 },
-    { w: 3, h: 1.8, d: 3, x: 10, z: 0 },
-    { w: 3, h: 2.8, d: 3, x: 14, z: 0 },
-    { w: 4, h: 3.8, d: 4, x: 18.5, z: 0 },
+export function generateObstacleSpecs(): ObstacleBoxSpec[] {
+  const rand = createSeededRandom(2026);
+  const specs: ObstacleBoxSpec[] = [
+    // Stepping-stone platforms near the center for jump testing
+    { width: 3, height: 0.7, depth: 3, x: 5, y: 0.35, z: 0 },
+    { width: 3, height: 1.5, depth: 3, x: 9.5, y: 0.75, z: 0 },
+    { width: 3, height: 2.3, depth: 3, x: 14, y: 1.15, z: 0 },
+    { width: 4, height: 3.1, depth: 4, x: 19, y: 1.55, z: 0 },
   ];
 
-  for (const step of steps) {
-    addStaticBox(
-      world,
-      scene,
-      worldMaterial,
-      step.w,
-      step.h,
-      step.d,
-      step.x,
-      step.h / 2,
-      step.z,
-      0x38bdf8
-    );
-  }
+  const count = 28;
+  for (let i = 0; i < count; i++) {
+    const width = 1.5 + rand() * 3.0;
+    const height = 0.7 + rand() * 2.5;
+    const depth = 1.5 + rand() * 3.0;
 
-  // Scatter 35 random static boxes around the map
-  const boxCount = 35;
-  for (let i = 0; i < boxCount; i++) {
-    const width = 1.5 + rand() * 3.5;
-    const height = 0.8 + rand() * 3.2;
-    const depth = 1.5 + rand() * 3.5;
-
-    // Pick a random position outside the central spawn zone
-    let x = (rand() - 0.5) * 80;
-    let z = (rand() - 0.5) * 80;
+    let x = (rand() - 0.5) * 70;
+    let z = (rand() - 0.5) * 70;
+    // Keep central spawn zone clear
     if (Math.abs(x) < 6 && Math.abs(z) < 6) {
-      x += x >= 0 ? 8 : -8;
-      z += z >= 0 ? 8 : -8;
+      x += x >= 0 ? 7 : -7;
+      z += z >= 0 ? 7 : -7;
     }
 
-    const color = boxColors[Math.floor(rand() * boxColors.length)] ?? 0x64748b;
-
-    addStaticBox(
-      world,
-      scene,
-      worldMaterial,
+    specs.push({
       width,
       height,
       depth,
       x,
-      height / 2, // Rest flush on the ground plane (y = 0)
+      y: height / 2,
       z,
-      color
-    );
+    });
   }
+
+  return specs;
 }
 
+/**
+ * Initializes the Rapier WASM physics runtime and creates a World with
+ * standard Earth gravity (0, -9.81, 0).
+ */
+export async function initPhysicsWorld(): Promise<RAPIER.World> {
+  await RAPIER.init();
+  const gravity = new RAPIER.Vector3(0.0, -9.81, 0.0);
+  return new RAPIER.World(gravity);
+}
+
+/**
+ * Spawns a static ground cuboid collider centered so its top surface is at y = 0.
+ */
+export function createGroundCollider(world: RAPIER.World): RAPIER.Collider {
+  const groundBodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(
+    0,
+    -GROUND_THICKNESS / 2,
+    0
+  );
+  const groundBody = world.createRigidBody(groundBodyDesc);
+
+  const groundColliderDesc = RAPIER.ColliderDesc.cuboid(
+    GROUND_WIDTH / 2,
+    GROUND_THICKNESS / 2,
+    GROUND_DEPTH / 2
+  ).setFriction(0.0);
+
+  return world.createCollider(groundColliderDesc, groundBody);
+}
+
+/**
+ * Spawns a static obstacle box (fixed rigid body with mass 0 + cuboid collider).
+ */
+export function createStaticObstacleBox(
+  world: RAPIER.World,
+  spec: ObstacleBoxSpec
+): RAPIER.RigidBody {
+  const bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(
+    spec.x,
+    spec.y,
+    spec.z
+  );
+  const body = world.createRigidBody(bodyDesc);
+
+  const colliderDesc = RAPIER.ColliderDesc.cuboid(
+    spec.width / 2,
+    spec.height / 2,
+    spec.depth / 2
+  ).setFriction(0.0);
+
+  world.createCollider(colliderDesc, body);
+  return body;
+}
+
+/**
+ * Spawns a dynamic cylinder rigid body for the local player with X and Z
+ * angular rotations locked so the cylinder stays upright while moving.
+ */
+export function createPlayerCylinderBody(
+  world: RAPIER.World,
+  x = 0,
+  y = 2.0,
+  z = 0
+): RAPIER.RigidBody {
+  const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
+    .setTranslation(x, y, z)
+    .enabledRotations(false, true, false) // Lock X and Z rotation axes
+    .setLinearDamping(0.0);
+
+  const body = world.createRigidBody(bodyDesc);
+
+  const colliderDesc = RAPIER.ColliderDesc.cylinder(
+    PLAYER_HALF_HEIGHT,
+    PLAYER_RADIUS
+  )
+    .setFriction(0.0)
+    .setRestitution(0.0)
+    .setMass(1.0);
+
+  world.createCollider(colliderDesc, body);
+  return body;
+}
+
+/**
+ * Performs a short downward raycast from the bottom of the player cylinder
+ * to verify ground or box-top contact before allowing a jump.
+ */
+export function isPlayerGrounded(
+  world: RAPIER.World,
+  playerBody: RAPIER.RigidBody
+): boolean {
+  const pos = playerBody.translation();
+  // Start slightly above the bottom of the cylinder and cast downward
+  const rayOrigin = {
+    x: pos.x,
+    y: pos.y - PLAYER_HALF_HEIGHT + 0.05,
+    z: pos.z,
+  };
+  const rayDir = { x: 0, y: -1, z: 0 };
+  const ray = new RAPIER.Ray(rayOrigin, rayDir);
+  const maxToi = 0.18;
+
+  const hit = world.castRay(
+    ray,
+    maxToi,
+    true,
+    undefined,
+    undefined,
+    undefined,
+    playerBody
+  );
+
+  return hit !== null;
+}
+
+export { RAPIER };

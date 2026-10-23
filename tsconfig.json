@@ -4,6 +4,8 @@
     "module": "ESNext",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "moduleResolution": "bundler",
+    "experimentalDecorators": true,
+    "useDefineForClassFields": false,
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,

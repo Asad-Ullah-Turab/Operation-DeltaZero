@@ -1,132 +1,149 @@
-import * as THREE from 'three';
-import { initPhysics } from './physics';
-import { Player } from './player';
+import { Engine } from '@babylonjs/core/Engines/engine';
+import { Scene } from '@babylonjs/core/scene';
+import '@babylonjs/core/Inputs/scene.inputManager';
+import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
+import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
+import { Vector3 } from '@babylonjs/core/Maths/math.vector';
+import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
+import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
+import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
+import {
+  initPhysicsWorld,
+  createGroundCollider,
+  createStaticObstacleBox,
+  generateObstacleSpecs,
+  GROUND_WIDTH,
+  GROUND_DEPTH,
+} from './physics';
+import { LocalPlayer } from './player';
 import { NetworkManager } from './network';
 
-// --- 1. Three.js Scene, Camera, and Renderer Setup ---
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0f172a);
-scene.fog = new THREE.FogExp2(0x0f172a, 0.012);
+async function bootstrap(): Promise<void> {
+  const canvas = document.getElementById('renderCanvas') as HTMLCanvasElement | null;
+  if (!canvas) {
+    throw new Error('Missing #renderCanvas element');
+  }
 
-const camera = new THREE.PerspectiveCamera(
-  65,
-  window.innerWidth / window.innerHeight,
-  0.1,
-  200
-);
+  const fpsElement = document.getElementById('fps-counter');
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-document.body.appendChild(renderer.domElement);
+  // 1. Initialize Babylon Engine optimized for low-spec / integrated GPUs
+  const engine = new Engine(canvas, true, {
+    preserveDrawingBuffer: false,
+    stencil: false,
+    powerPreference: 'high-performance',
+    antialias: true,
+  });
 
-// --- 2. Lighting ---
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.55);
-scene.add(ambientLight);
+  // 2. Create Scene with low-overhead clearing & state management
+  const scene = new Scene(engine);
+  scene.clearColor = new Color4(0.07, 0.09, 0.15, 1.0);
+  scene.skipPointerMovePicking = true;
 
-const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
-dirLight.position.set(25, 45, 25);
-dirLight.castShadow = true;
-dirLight.shadow.mapSize.width = 2048;
-dirLight.shadow.mapSize.height = 2048;
-dirLight.shadow.camera.near = 0.5;
-dirLight.shadow.camera.far = 120;
-const shadowBounds = 50;
-dirLight.shadow.camera.left = -shadowBounds;
-dirLight.shadow.camera.right = shadowBounds;
-dirLight.shadow.camera.top = shadowBounds;
-dirLight.shadow.camera.bottom = -shadowBounds;
-scene.add(dirLight);
+  // 3. Lighting
+  const light = new HemisphericLight('hemiLight', new Vector3(0.3, 1, 0.2), scene);
+  light.intensity = 0.95;
+  light.groundColor = new Color3(0.18, 0.22, 0.3);
 
-// --- 3. Initialize Physics, Local Player, and LAN Networking ---
-const physics = initPhysics(scene);
-const player = new Player(scene, physics);
-const network = new NetworkManager(scene, player);
+  // 4. Initialize Rapier3D WASM Physics World
+  const world = await initPhysicsWorld();
 
-// --- 4. Third-Person Orbit Camera Controls ---
-let cameraYaw = 0; // Horizontal angle around the player (radians)
-let cameraPitch = 0.45; // Vertical angle (radians)
-const cameraDistance = 11;
-let isDragging = false;
-const orbitKeys: Record<string, boolean> = {};
+  // 5. Build Ground Collider & Visual Plane
+  createGroundCollider(world);
 
-window.addEventListener('mousedown', (e: MouseEvent) => {
-  if (e.button === 0) isDragging = true;
-});
-window.addEventListener('mouseup', () => {
-  isDragging = false;
-});
-window.addEventListener('mousemove', (e: MouseEvent) => {
-  if (!isDragging) return;
-  cameraYaw -= e.movementX * 0.006;
-  cameraPitch = THREE.MathUtils.clamp(
-    cameraPitch + e.movementY * 0.005,
-    0.15,
-    1.25
+  const groundMesh = MeshBuilder.CreateGround(
+    'ground',
+    { width: GROUND_WIDTH, height: GROUND_DEPTH, subdivisions: 2 },
+    scene
   );
-});
-window.addEventListener('keydown', (e: KeyboardEvent) => {
-  orbitKeys[e.code] = true;
-});
-window.addEventListener('keyup', (e: KeyboardEvent) => {
-  orbitKeys[e.code] = false;
-});
+  const groundMat = new StandardMaterial('groundMat', scene);
+  groundMat.diffuseColor = new Color3(0.14, 0.19, 0.26);
+  groundMat.specularColor = Color3.Black();
+  groundMat.freeze();
+  groundMesh.material = groundMat;
+  groundMesh.freezeWorldMatrix();
 
-function updateCamera(deltaTime: number): void {
-  // Allow Q and E keys to rotate camera horizontally in addition to mouse drag
-  const keyboardTurnSpeed = 1.8;
-  if (orbitKeys['KeyQ']) cameraYaw += keyboardTurnSpeed * deltaTime;
-  if (orbitKeys['KeyE']) cameraYaw -= keyboardTurnSpeed * deltaTime;
+  // 6. Build Static Obstacle Colliders & Visual Boxes (shared material for draw-call batching)
+  const boxMat = new StandardMaterial('obstacleBoxMat', scene);
+  boxMat.diffuseColor = new Color3(0.38, 0.48, 0.58);
+  boxMat.specularColor = Color3.Black();
+  boxMat.freeze();
 
-  const target = player.mesh.position;
+  const obstacleSpecs = generateObstacleSpecs();
+  obstacleSpecs.forEach((spec, index) => {
+    createStaticObstacleBox(world, spec);
 
-  // Spherical offset from the player cylinder
-  const horizontalDist = cameraDistance * Math.cos(cameraPitch);
-  const verticalDist = cameraDistance * Math.sin(cameraPitch);
+    const boxMesh = MeshBuilder.CreateBox(
+      `obstacle_${index}`,
+      {
+        width: spec.width,
+        height: spec.height,
+        depth: spec.depth,
+      },
+      scene
+    );
+    boxMesh.position.set(spec.x, spec.y, spec.z);
+    boxMesh.material = boxMat;
+    boxMesh.freezeWorldMatrix();
+  });
 
-  const desiredX = target.x + Math.sin(cameraYaw) * horizontalDist;
-  const desiredY = target.y + verticalDist;
-  const desiredZ = target.z + Math.cos(cameraYaw) * horizontalDist;
+  // 7. Spawn Local Player (Babylon cylinder + Rapier dynamic body)
+  const localPlayer = new LocalPlayer(scene, world);
 
-  camera.position.set(desiredX, desiredY, desiredZ);
-  camera.lookAt(target.x, target.y + 0.8, target.z);
+  // 8. ArcRotateCamera targeting the local player cylinder
+  const camera = new ArcRotateCamera(
+    'playerCamera',
+    -Math.PI / 2,
+    Math.PI / 3.2,
+    13,
+    new Vector3(0, 2, 0),
+    scene
+  );
+  camera.lowerBetaLimit = 0.25;
+  camera.upperBetaLimit = Math.PI / 2 - 0.08;
+  camera.lowerRadiusLimit = 5;
+  camera.upperRadiusLimit = 28;
+  camera.panningSensibility = 0; // Disable right-click camera panning so target stays on player
+  camera.keysUp = [];
+  camera.keysDown = [];
+  camera.keysLeft = [];
+  camera.keysRight = [];
+  camera.attachControl(canvas, true);
+
+  // 9. Connect to Colyseus Authoritative Server
+  const network = new NetworkManager(scene, localPlayer);
+  void network.connect();
+
+  // 10. Main Render & Physics Loop
+  let lastFpsUpdate = performance.now();
+
+  engine.runRenderLoop(() => {
+    const dtSeconds = Math.min(engine.getDeltaTime() / 1000, 0.1);
+
+    // Step Rapier3D physics world
+    world.step();
+
+    // Update local player movement & sync mesh from Rapier body
+    localPlayer.update(camera);
+
+    // Keep ArcRotateCamera orbit center synced to the player cylinder
+    camera.target.copyFrom(localPlayer.mesh.position);
+
+    // Sync local state to Colyseus & interpolate remote players
+    network.update(dtSeconds);
+
+    // Update FPS counter once every 500ms to prevent DOM layout thrashing
+    const now = performance.now();
+    if (fpsElement && now - lastFpsUpdate >= 500) {
+      fpsElement.textContent = `FPS: ${engine.getFps().toFixed(0)}`;
+      lastFpsUpdate = now;
+    }
+
+    scene.render();
+  });
+
+  window.addEventListener('resize', () => {
+    engine.resize();
+  });
 }
 
-// --- 5. Handle Window Resizing ---
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-});
-
-// --- 6. Main Game & Render Loop ---
-const FIXED_TIME_STEP = 1 / 60;
-const MAX_SUB_STEPS = 3;
-const clock = new THREE.Clock();
-
-function animate(): void {
-  requestAnimationFrame(animate);
-
-  // Clamp deltaTime so tab switching doesn't cause a huge physics jump
-  const deltaTime = Math.min(clock.getDelta(), 0.1);
-
-  // Step Cannon-es physics simulation
-  physics.world.step(FIXED_TIME_STEP, deltaTime, MAX_SUB_STEPS);
-
-  // Update local player movement (relative to current camera angle) & sync mesh
-  player.update(camera);
-
-  // Update third-person follow camera
-  updateCamera(deltaTime);
-
-  // Emit local transform & interpolate remote players
-  network.update(deltaTime);
-
-  // Render scene
-  renderer.render(scene, camera);
-}
-
-animate();
-
+void bootstrap();
