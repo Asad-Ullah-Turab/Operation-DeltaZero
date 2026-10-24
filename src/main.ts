@@ -171,7 +171,10 @@ async function bootstrap(): Promise<void> {
     scene.activeCamera = arcCamera;
   }
 
-  window.addEventListener('mousemove', (e: MouseEvent) => {
+  // Use pointermove (not mousemove): Babylon's InputManager cancels canvas
+  // pointerdown, which suppresses legacy mousemove events while any mouse
+  // button is held — that froze mouse-look while firing / aiming.
+  window.addEventListener('pointermove', (e: PointerEvent) => {
     if (document.pointerLockElement === canvas) {
       localPlayer.handleMouseMove(e.movementX, e.movementY, arcCamera);
     }

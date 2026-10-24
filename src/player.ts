@@ -827,33 +827,48 @@ export class LocalPlayer {
       this.keys[e.code] = false;
     });
 
-    window.addEventListener('mousedown', (e: MouseEvent) => {
-      if (this.characterType !== 'Merc') return;
-      // Ignore clicks on the selection menu before pointer lock
-      if (document.pointerLockElement === null) return;
+    // NOTE: Pointer events are used instead of mousedown/mouseup because
+    // Babylon's scene InputManager calls preventDefault() on canvas
+    // `pointerdown`, which (per the Pointer Events spec) suppresses the legacy
+    // mousedown/mousemove/mouseup compatibility events while a button is held.
+    // The `buttons` bitmask is used so chorded presses (e.g. holding RMB for
+    // ADS and then pressing LMB to fire) are detected — browsers only send
+    // pointerdown for the first button and report later ones via pointermove.
+    let prevButtons = 0;
+    const handleButtons = (e: PointerEvent): void => {
+      if (this.characterType !== 'Merc' || e.pointerType !== 'mouse') return;
 
-      if (e.button === 0) {
-        this.isFiringHeld = true;
-      } else if (e.button === 2) {
-        e.preventDefault();
-        this.rmbDownTimestamp = performance.now();
-        if (this.isAdsToggled) {
-          this.isAdsToggled = false;
-          this.isAdsHeld = false;
-        } else {
-          this.isAdsHeld = true;
-        }
-      }
-    });
+      const buttons = e.buttons;
+      if (buttons === prevButtons) return;
+      const locked = document.pointerLockElement !== null;
 
-    window.addEventListener('mouseup', (e: MouseEvent) => {
-      if (this.characterType !== 'Merc') return;
+      const lmb = (buttons & 1) !== 0;
+      const rmb = (buttons & 2) !== 0;
+      const prevLmb = (prevButtons & 1) !== 0;
+      const prevRmb = (prevButtons & 2) !== 0;
+      prevButtons = buttons;
 
-      if (e.button === 0) {
+      // Left Mouse Button: automatic fire while held
+      if (lmb && !prevLmb) {
+        // Ignore clicks on the selection menu before pointer lock
+        if (locked) this.isFiringHeld = true;
+      } else if (!lmb && prevLmb) {
         this.isFiringHeld = false;
         this.stopFiringBurstIfNeeded();
-      } else if (e.button === 2) {
-        e.preventDefault();
+      }
+
+      // Right Mouse Button: hold for ADS, or short-click to toggle ADS
+      if (rmb && !prevRmb) {
+        if (locked) {
+          this.rmbDownTimestamp = performance.now();
+          if (this.isAdsToggled) {
+            this.isAdsToggled = false;
+            this.isAdsHeld = false;
+          } else {
+            this.isAdsHeld = true;
+          }
+        }
+      } else if (!rmb && prevRmb) {
         const heldMs = performance.now() - this.rmbDownTimestamp;
         if (this.isAdsHeld && heldMs < 180) {
           // Short click toggles ADS on
@@ -861,6 +876,16 @@ export class LocalPlayer {
         }
         this.isAdsHeld = false;
       }
+    };
+
+    window.addEventListener('pointerdown', handleButtons);
+    window.addEventListener('pointermove', handleButtons);
+    window.addEventListener('pointerup', handleButtons);
+    window.addEventListener('pointercancel', () => {
+      prevButtons = 0;
+      this.isFiringHeld = false;
+      this.isAdsHeld = false;
+      this.stopFiringBurstIfNeeded();
     });
 
     window.addEventListener('contextmenu', (e: MouseEvent) => {
@@ -873,6 +898,7 @@ export class LocalPlayer {
       }
       this.isFiringHeld = false;
       this.isAdsHeld = false;
+      prevButtons = 0;
       this.stopFiringBurstIfNeeded();
     });
   }
