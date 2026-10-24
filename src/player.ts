@@ -829,46 +829,38 @@ export class LocalPlayer {
 
     // NOTE: Pointer events are used instead of mousedown/mouseup because
     // Babylon's scene InputManager calls preventDefault() on canvas
-    // `pointerdown`, which (per the Pointer Events spec) suppresses the legacy
-    // mousedown/mousemove/mouseup compatibility events while a button is held.
-    // The `buttons` bitmask is used so chorded presses (e.g. holding RMB for
-    // ADS and then pressing LMB to fire) are detected — browsers only send
-    // pointerdown for the first button and report later ones via pointermove.
-    let prevButtons = 0;
-    const handleButtons = (e: PointerEvent): void => {
+    // `pointerdown`, which suppresses legacy mouse events.
+    //
+    // CRITICAL: We deliberately DO NOT listen to `pointermove` for button state!
+    // Under pointer lock (especially on Linux/Wayland and in Firefox), `pointermove`
+    // events often report `e.buttons === 0` during cursor translation.
+    // Relying on `pointermove` to detect LMB state caused the weapon to stop firing
+    // immediately whenever the mouse was moved.
+    const onPointerDown = (e: PointerEvent): void => {
+      if (this.characterType !== 'Merc' || e.pointerType !== 'mouse') return;
+      // Ignore clicks before pointer lock is active (e.g. clicking selection menu)
+      if (document.pointerLockElement === null) return;
+
+      if (e.button === 0) {
+        this.isFiringHeld = true;
+      } else if (e.button === 2) {
+        this.rmbDownTimestamp = performance.now();
+        if (this.isAdsToggled) {
+          this.isAdsToggled = false;
+          this.isAdsHeld = false;
+        } else {
+          this.isAdsHeld = true;
+        }
+      }
+    };
+
+    const onPointerUp = (e: PointerEvent): void => {
       if (this.characterType !== 'Merc' || e.pointerType !== 'mouse') return;
 
-      const buttons = e.buttons;
-      if (buttons === prevButtons) return;
-      const locked = document.pointerLockElement !== null;
-
-      const lmb = (buttons & 1) !== 0;
-      const rmb = (buttons & 2) !== 0;
-      const prevLmb = (prevButtons & 1) !== 0;
-      const prevRmb = (prevButtons & 2) !== 0;
-      prevButtons = buttons;
-
-      // Left Mouse Button: automatic fire while held
-      if (lmb && !prevLmb) {
-        // Ignore clicks on the selection menu before pointer lock
-        if (locked) this.isFiringHeld = true;
-      } else if (!lmb && prevLmb) {
+      if (e.button === 0) {
         this.isFiringHeld = false;
         this.stopFiringBurstIfNeeded();
-      }
-
-      // Right Mouse Button: hold for ADS, or short-click to toggle ADS
-      if (rmb && !prevRmb) {
-        if (locked) {
-          this.rmbDownTimestamp = performance.now();
-          if (this.isAdsToggled) {
-            this.isAdsToggled = false;
-            this.isAdsHeld = false;
-          } else {
-            this.isAdsHeld = true;
-          }
-        }
-      } else if (!rmb && prevRmb) {
+      } else if (e.button === 2) {
         const heldMs = performance.now() - this.rmbDownTimestamp;
         if (this.isAdsHeld && heldMs < 180) {
           // Short click toggles ADS on
@@ -878,14 +870,20 @@ export class LocalPlayer {
       }
     };
 
-    window.addEventListener('pointerdown', handleButtons);
-    window.addEventListener('pointermove', handleButtons);
-    window.addEventListener('pointerup', handleButtons);
-    window.addEventListener('pointercancel', () => {
-      prevButtons = 0;
+    const resetAimAndFiring = (): void => {
       this.isFiringHeld = false;
       this.isAdsHeld = false;
+      this.isAdsToggled = false;
       this.stopFiringBurstIfNeeded();
+    };
+
+    window.addEventListener('pointerdown', onPointerDown, { capture: true });
+    window.addEventListener('pointerup', onPointerUp, { capture: true });
+    window.addEventListener('pointercancel', resetAimAndFiring);
+    document.addEventListener('pointerlockchange', () => {
+      if (document.pointerLockElement === null) {
+        resetAimAndFiring();
+      }
     });
 
     window.addEventListener('contextmenu', (e: MouseEvent) => {
@@ -896,10 +894,7 @@ export class LocalPlayer {
       for (const k of Object.keys(this.keys)) {
         this.keys[k] = false;
       }
-      this.isFiringHeld = false;
-      this.isAdsHeld = false;
-      prevButtons = 0;
-      this.stopFiringBurstIfNeeded();
+      resetAimAndFiring();
     });
   }
 
