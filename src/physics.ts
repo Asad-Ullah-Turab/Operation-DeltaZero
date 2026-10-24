@@ -78,7 +78,7 @@ export function generateObstacleSpecs(): ObstacleBoxSpec[] {
  */
 export async function initPhysicsWorld(): Promise<RAPIER.World> {
   await RAPIER.init();
-  const gravity = new RAPIER.Vector3(0.0, -9.81, 0.0);
+  const gravity = new RAPIER.Vector3(0.0, -19.81, 0.0);
   return new RAPIER.World(gravity);
 }
 

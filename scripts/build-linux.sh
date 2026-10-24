@@ -3,16 +3,13 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TOOLCHAIN_DIR="$PROJECT_DIR/.toolchain"
-SYSROOT="$TOOLCHAIN_DIR/sysroot"
 
 export RUSTUP_HOME="$TOOLCHAIN_DIR/rustup"
 export CARGO_HOME="$TOOLCHAIN_DIR/cargo"
 export CARGO_NET_OFFLINE=true
-export PATH="$CARGO_HOME/bin:$SYSROOT/usr/bin:$PATH"
-export LD_LIBRARY_PATH="$SYSROOT/usr/lib:/usr/lib:${LD_LIBRARY_PATH:-}"
-export LIBRARY_PATH="$SYSROOT/usr/lib:/usr/lib:${LIBRARY_PATH:-}"
-export PKG_CONFIG_PATH="$SYSROOT/usr/lib/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig:${PKG_CONFIG_PATH:-}"
-export RUSTFLAGS="-L native=$SYSROOT/usr/lib -C link-arg=-Wl,-rpath,$SYSROOT/usr/lib -C link-arg=-Wl,-rpath-link,$SYSROOT/usr/lib"
+export PATH="$CARGO_HOME/bin:/usr/bin:$PATH"
+export PKG_CONFIG_PATH="/usr/lib/pkgconfig:/usr/share/pkgconfig:${PKG_CONFIG_PATH:-}"
+unset LD_LIBRARY_PATH LIBRARY_PATH RUSTFLAGS
 
 cd "$PROJECT_DIR"
 echo "=== Building Linux Native Binary & Packages (Tauri v2) ==="
@@ -25,4 +22,3 @@ cp -f "$PROJECT_DIR/src-tauri/target/release/bundle/rpm/"*.rpm "$PROJECT_DIR/rel
 
 echo "=== Linux build complete! Outputs in release/linux/ and src-tauri/target/release/ ==="
 ls -lh "$PROJECT_DIR/release/linux/"
-

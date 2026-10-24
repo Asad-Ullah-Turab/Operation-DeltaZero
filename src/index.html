@@ -8,6 +8,38 @@
   </head>
   <body>
     <div id="fps-counter" style="position:fixed;top:10px;left:10px;color:#00ff00;font-family:monospace;font-size:14px;pointer-events:none;z-index:9999;">FPS: --</div>
+
+    <div id="crosshair" class="hidden" aria-hidden="true"></div>
+
+    <div id="ammo-hud" class="hidden" aria-live="polite">
+      <div class="ammo-main">
+        <span id="ammo-rounds" class="ammo-rounds">30</span>
+        <span class="ammo-divider">/</span>
+        <div class="ammo-reserve">
+          <span id="ammo-mags-bars" class="ammo-mags-bars">[ |||| ]</span>
+          <span id="ammo-mags-count" class="ammo-mags-count">4 MAGS</span>
+        </div>
+      </div>
+      <div class="ammo-label">5.56x45MM NATO &bull; M4A1</div>
+    </div>
+
+    <div id="character-select-menu">
+      <div class="menu-card">
+        <h1 class="menu-title">Select Operative</h1>
+        <p class="menu-subtitle">Choose your class to deploy into the arena</p>
+        <div class="menu-buttons">
+          <button id="select-spie-btn" class="role-btn" type="button">
+            <span class="role-name">Spie</span>
+            <span class="role-desc">Third-Person Operative</span>
+          </button>
+          <button id="select-merc-btn" class="role-btn role-btn-merc" type="button">
+            <span class="role-name">Mercenary</span>
+            <span class="role-desc">First-Person M4A1 Specialist</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
     <canvas id="renderCanvas"></canvas>
     <script type="module" src="./main.ts"></script>
   </body>

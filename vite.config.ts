@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
   root: 'src',
+  publicDir: '../public',
   base: './',
   optimizeDeps: {
     exclude: ['@dimforge/rapier3d-compat'],
