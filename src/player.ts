@@ -162,7 +162,7 @@ function normalizeMercContainerGeometry(container: AssetContainer): void {
 }
 
 /**
- * Preloads both `player.glb` (Spie) and `fps_merc_m4a1.glb` (Merc) into
+ * Preloads both `spy.glb` (Spie) and `fps_merc_m4a1.glb` (Merc) into
  * reusable Babylon AssetContainers.
  */
 export async function loadCharacterAssets(
@@ -171,7 +171,7 @@ export async function loadCharacterAssets(
   const [spieContainer, mercContainer] = await Promise.all([
     SceneLoader.LoadAssetContainerAsync(
       './assets/characters/',
-      'player.glb',
+      'spy.glb',
       scene
     ),
     SceneLoader.LoadAssetContainerAsync(
@@ -187,20 +187,26 @@ export async function loadCharacterAssets(
 }
 
 /**
- * Legacy helper alias for loading `player.glb`.
+ * Legacy helper alias for loading `spy.glb`.
  */
 export async function loadPlayerAssetContainer(
   scene: Scene
 ): Promise<AssetContainer> {
   return SceneLoader.LoadAssetContainerAsync(
     './assets/characters/',
-    'player.glb',
+    'spy.glb',
     scene
   );
 }
 
 /**
- * Instantiates a 3D Spie character from `player.glb`, aligns its feet with the
+ * Scale factor for `spy.glb` (~437 units tall in raw FBX space)
+ * to match human height (~1.75m tall).
+ */
+const SPY_MODEL_SCALE = 0.004;
+
+/**
+ * Instantiates a 3D Spie character from `spy.glb`, aligns its feet with the
  * bottom of the physics collider (-PLAYER_HALF_HEIGHT), and manages animations.
  */
 export function createSpieVisual(
@@ -220,6 +226,14 @@ export function createSpieVisual(
     node.parent = root;
     if (node instanceof TransformNode) {
       node.position.set(0, -PLAYER_HALF_HEIGHT, 0);
+      node.scaling.setAll(SPY_MODEL_SCALE);
+    }
+  }
+
+  for (const childMesh of root.getChildMeshes()) {
+    childMesh.isPickable = false;
+    if (childMesh.material) {
+      childMesh.material.backFaceCulling = false;
     }
   }
 
@@ -234,10 +248,11 @@ export function createSpieVisual(
     }
   }
 
-  let currentAnim = '';
+  let currentAnim = 'Idle';
   let activeGroup: AnimationGroup | null = null;
 
   const playAnimation = (animName: string): void => {
+    currentAnim = animName;
     const targetGroup =
       animMap.get(animName) ??
       animMap.get(`CharacterArmature|${animName}`) ??
@@ -246,7 +261,6 @@ export function createSpieVisual(
     if (!targetGroup) return;
 
     if (
-      currentAnim === animName &&
       activeGroup === targetGroup &&
       targetGroup.isPlaying
     ) {
@@ -261,7 +275,6 @@ export function createSpieVisual(
     const speedRatio = SPIE_ANIM_SPEED_RATIOS[animName] ?? 1.0;
     targetGroup.start(true, speedRatio);
     activeGroup = targetGroup;
-    currentAnim = animName;
   };
 
   playAnimation('Idle');
@@ -270,8 +283,8 @@ export function createSpieVisual(
     for (const ag of instantiated.animationGroups) {
       ag.dispose();
     }
-    for (const skel of instantiated.skeletons as Skeleton[]) {
-      skel.dispose();
+    for (const skel of (instantiated.skeletons ?? []) as Skeleton[]) {
+      skel?.dispose();
     }
     root.dispose(false, true);
   };
