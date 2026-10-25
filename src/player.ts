@@ -471,21 +471,21 @@ export function createSpieVisual(
           }
         }
       } else if (currentState === 'left-turn' || currentState === 'right-turn') {
-        if (context.isMoving) {
-          setTarget('start-walking', true);
-        } else if (singleShotElapsed >= singleShotDuration * 0.75) {
-          const idleT = tracks.get('idle');
+        if (!context.isMoving) {
+          setTarget('stop-walking', true);
+        } else if (singleShotElapsed >= singleShotDuration * 0.65) {
+          const walkTrack = tracks.get('walking');
           const turnT = tracks.get(currentState);
-          if (idleT && turnT) {
-            idleT.targetWeight = 1.0;
+          if (walkTrack && turnT) {
+            walkTrack.targetWeight = 1.0;
             turnT.targetWeight = 0.0;
-            if (!idleT.group.isPlaying) {
-              idleT.group.start(true, idleT.speedRatio);
+            if (!walkTrack.group.isPlaying) {
+              walkTrack.group.start(true, walkTrack.speedRatio);
             }
           }
           if (singleShotElapsed >= singleShotDuration) {
             isSingleShot = false;
-            currentState = 'idle';
+            currentState = 'walking';
           }
         }
       }
@@ -514,7 +514,19 @@ export function createSpieVisual(
       }
     } else {
       if (context.isMoving && !wasMoving) {
-        setTarget('start-walking', true);
+        // Turning to movement direction when starting to move from stationary standing
+        const moveAngle = Math.atan2(context.moveDir.x, context.moveDir.z);
+        const turnAngle = normalizeAngle(moveAngle - context.rotationY);
+
+        if (turnAngle <= -0.65 && turnAngle > -2.35) {
+          setTarget('left-turn', true);
+        } else if (turnAngle >= 0.65 && turnAngle < 2.35) {
+          setTarget('right-turn', true);
+        } else if (Math.abs(turnAngle) >= 2.35) {
+          setTarget('walking-turn-180', true);
+        } else {
+          setTarget('start-walking', true);
+        }
       } else if (context.isMoving && wasMoving) {
         const dot = Vector3.Dot(context.moveDir, lastMoveDir);
         if (dot < -0.6) {
@@ -525,14 +537,8 @@ export function createSpieVisual(
       } else if (!context.isMoving && wasMoving) {
         setTarget('stop-walking', true);
       } else if (!context.isMoving && !wasMoving && !isSingleShot) {
-        // Stationary turning towards camera direction if angle difference exceeds threshold
-        const camAngle = Math.atan2(context.camForward.x, context.camForward.z);
-        const angleDiff = normalizeAngle(camAngle - context.rotationY);
-        if (angleDiff < -0.35) {
-          setTarget('left-turn', true);
-        } else if (angleDiff > 0.35) {
-          setTarget('right-turn', true);
-        } else if (Math.abs(angleDiff) < 0.15 && currentState !== 'idle') {
+        // When stationary standing: do not follow camera orbit; remain in idle
+        if (currentState !== 'idle') {
           setTarget('idle');
         }
       }
@@ -1774,7 +1780,7 @@ export class LocalPlayer {
         dtSeconds * 20.0
       );
     } else if (isMovingHorizontally) {
-      // In normal movement: character faces movement direction
+      // In normal movement: character faces movement direction (which follows camera facing)
       this.targetRotationY = Math.atan2(
         this.moveDirScratch.x,
         this.moveDirScratch.z
@@ -1784,22 +1790,8 @@ export class LocalPlayer {
         this.targetRotationY,
         dtSeconds * TURN_SMOOTH_SPEED
       );
-    } else {
-      // When stationary: turn character towards camera direction if angle difference is significant
-      const angleDiff = normalizeAngle(camAngle - this.rotationY);
-      const activeAnim = this.visual.getCurrentAnimation();
-      if (
-        Math.abs(angleDiff) > 0.35 ||
-        activeAnim === 'left-turn' ||
-        activeAnim === 'right-turn'
-      ) {
-        this.rotationY = lerpAngleY(
-          this.rotationY,
-          camAngle,
-          dtSeconds * 3.5
-        );
-      }
     }
+    // When stationary: do not follow camera when orbiting; preserve character orientation
 
     // Update animations via the weighted blend state machine
     this.visual.updateAnimation?.(dtSeconds, {
