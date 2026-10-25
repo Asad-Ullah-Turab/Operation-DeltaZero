@@ -168,6 +168,7 @@ async function bootstrap(): Promise<void> {
     arcCamera.keysLeft = [];
     arcCamera.keysRight = [];
     arcCamera.attachControl(canvas, true);
+    arcCamera.inputs.removeByType('ArcRotateCameraPointersInput');
     scene.activeCamera = arcCamera;
   }
 

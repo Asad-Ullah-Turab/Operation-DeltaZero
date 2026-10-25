@@ -77,12 +77,23 @@ const ARM_VERTEX_CORRECTION_SCALE = -1.0 / 3840.0;
 const HIDE_LOW_READY_FRAME = 10;
 const DRAW_FROM_LOW_READY_FRAME = 22;
 
+export interface SpieAnimContext {
+  isMoving: boolean;
+  isStrafing: boolean; // right click held
+  moveDir: Vector3;
+  camForward: Vector3;
+  camRight: Vector3;
+  camAlpha: number;
+  rotationY: number;
+}
+
 export interface CharacterVisual {
   root: Mesh;
   characterType: CharacterType;
   muzzleNode: TransformNode | null;
   muzzleFlashMesh: Mesh | null;
   playAnimation: (animName: string) => void;
+  updateAnimation?: (dtSeconds: number, context: SpieAnimContext) => void;
   triggerReload?: () => boolean;
   triggerHide?: () => void;
   getCurrentAnimation: () => string;
@@ -212,6 +223,94 @@ function computeModelHeightAndBaseY(container: AssetContainer): {
 }
 
 /**
+ * Normalizes an angle in radians into the range [-PI, PI].
+ */
+export function normalizeAngle(angle: number): number {
+  let diff = (angle + Math.PI) % (Math.PI * 2);
+  if (diff < 0) {
+    diff += Math.PI * 2;
+  }
+  return diff - Math.PI;
+}
+
+export type SpieAnimationName =
+  | 'idle'
+  | 'walking'
+  | 'start-walking'
+  | 'stop-walking'
+  | 'walking-turn-180'
+  | 'left-turn'
+  | 'right-turn'
+  | 'left-strafe-walking'
+  | 'right-strafe-walking';
+
+interface SpieTrack {
+  name: SpieAnimationName;
+  group: AnimationGroup;
+  currentWeight: number;
+  targetWeight: number;
+  isLooping: boolean;
+  speedRatio: number;
+  durationSec: number;
+}
+
+const SPIE_TRACK_CONFIGS: Array<{
+  name: SpieAnimationName;
+  isLooping: boolean;
+  speedRatio: number;
+}> = [
+  { name: 'idle', isLooping: true, speedRatio: 1.0 },
+  { name: 'walking', isLooping: true, speedRatio: 1.25 },
+  { name: 'left-strafe-walking', isLooping: true, speedRatio: 1.25 },
+  { name: 'right-strafe-walking', isLooping: true, speedRatio: 1.25 },
+  { name: 'start-walking', isLooping: false, speedRatio: 1.45 },
+  { name: 'stop-walking', isLooping: false, speedRatio: 1.45 },
+  { name: 'walking-turn-180', isLooping: false, speedRatio: 1.5 },
+  { name: 'left-turn', isLooping: false, speedRatio: 1.4 },
+  { name: 'right-turn', isLooping: false, speedRatio: 1.4 },
+];
+
+function resolveSpieAnimName(rawName: string): SpieAnimationName | null {
+  const lower = rawName.toLowerCase();
+  if (lower === 'idle') return 'idle';
+  if (lower === 'walking' || lower === 'walk' || lower === 'run') return 'walking';
+  if (lower === 'start-walking' || lower === 'start_walking') return 'start-walking';
+  if (lower === 'stop-walking' || lower === 'stop_walking') return 'stop-walking';
+  if (
+    lower === 'walking-turn-180' ||
+    lower === 'walking_turn_180' ||
+    lower === 'turn-180'
+  ) {
+    return 'walking-turn-180';
+  }
+  if (lower === 'left-turn' || lower === 'left_turn' || lower === 'turn-left') {
+    return 'left-turn';
+  }
+  if (
+    lower === 'right-turn' ||
+    lower === 'right_turn' ||
+    lower === 'turn-right'
+  ) {
+    return 'right-turn';
+  }
+  if (
+    lower === 'left-strafe' ||
+    lower === 'left-strafe-walking' ||
+    lower === 'strafe-left'
+  ) {
+    return 'left-strafe-walking';
+  }
+  if (
+    lower === 'right-strafe' ||
+    lower === 'right-strafe-walking' ||
+    lower === 'strafe-right'
+  ) {
+    return 'right-strafe-walking';
+  }
+  return null;
+}
+
+/**
  * Instantiates a 3D Spie character from `spy.glb`, aligns its feet with the
  * bottom of the physics collider (-PLAYER_HALF_HEIGHT), and manages animations.
  */
@@ -251,15 +350,253 @@ export function createSpieVisual(
     ag.stop();
   }
 
-  let currentAnim = 'Idle';
-
-  const playAnimation = (animName: string): void => {
-    currentAnim = animName;
+  const findGroup = (target: string): AnimationGroup | undefined => {
+    return instantiated.animationGroups.find(
+      (ag) => ag.name === target || ag.name.endsWith('|' + target)
+    );
   };
 
-  playAnimation('Idle');
+  const tracks = new Map<SpieAnimationName, SpieTrack>();
+  for (const cfg of SPIE_TRACK_CONFIGS) {
+    const ag = findGroup(cfg.name);
+    if (ag) {
+      const durationSec = (ag.to - ag.from) / (60.0 * cfg.speedRatio);
+      tracks.set(cfg.name, {
+        ...cfg,
+        group: ag,
+        currentWeight: cfg.name === 'idle' ? 1.0 : 0.0,
+        targetWeight: cfg.name === 'idle' ? 1.0 : 0.0,
+        durationSec,
+      });
+    }
+  }
+
+  const idleTrack = tracks.get('idle');
+  if (idleTrack) {
+    idleTrack.group.start(true, idleTrack.speedRatio);
+    idleTrack.group.setWeightForAllAnimatables(1.0);
+  }
+
+  let currentState: SpieAnimationName = 'idle';
+  let isSingleShot = false;
+  let singleShotElapsed = 0;
+  let singleShotDuration = 0;
+
+  const setTarget = (name: SpieAnimationName, isSingle = false): void => {
+    currentState = name;
+    isSingleShot = isSingle;
+    const targetTrack = tracks.get(name);
+    if (!targetTrack) return;
+
+    for (const [tName, track] of tracks) {
+      if (tName === name) {
+        track.targetWeight = 1.0;
+        if (isSingle) {
+          singleShotElapsed = 0;
+          singleShotDuration = track.durationSec;
+          track.group.reset();
+          track.group.start(false, track.speedRatio);
+        } else if (!track.group.isPlaying) {
+          track.group.start(true, track.speedRatio);
+        }
+      } else {
+        track.targetWeight = 0.0;
+      }
+    }
+  };
+
+  let wasMoving = false;
+  const lastMoveDir = new Vector3(0, 0, 1);
+
+  const updateAnimation = (
+    dtSeconds: number,
+    context: SpieAnimContext
+  ): void => {
+    // 1. Single-shot timers & early crossfade triggers
+    if (isSingleShot) {
+      singleShotElapsed += dtSeconds;
+
+      if (currentState === 'start-walking') {
+        if (!context.isMoving) {
+          setTarget('stop-walking', true);
+        } else if (singleShotElapsed >= singleShotDuration * 0.65) {
+          const walkTrack = tracks.get('walking');
+          const swTrack = tracks.get('start-walking');
+          if (walkTrack && swTrack) {
+            walkTrack.targetWeight = 1.0;
+            swTrack.targetWeight = 0.0;
+            if (!walkTrack.group.isPlaying) {
+              walkTrack.group.start(true, walkTrack.speedRatio);
+            }
+          }
+          if (singleShotElapsed >= singleShotDuration) {
+            isSingleShot = false;
+            currentState = 'walking';
+          }
+        }
+      } else if (currentState === 'stop-walking') {
+        if (context.isMoving) {
+          setTarget('start-walking', true);
+        } else if (singleShotElapsed >= singleShotDuration * 0.65) {
+          const idleT = tracks.get('idle');
+          const stopT = tracks.get('stop-walking');
+          if (idleT && stopT) {
+            idleT.targetWeight = 1.0;
+            stopT.targetWeight = 0.0;
+            if (!idleT.group.isPlaying) {
+              idleT.group.start(true, idleT.speedRatio);
+            }
+          }
+          if (singleShotElapsed >= singleShotDuration) {
+            isSingleShot = false;
+            currentState = 'idle';
+          }
+        }
+      } else if (currentState === 'walking-turn-180') {
+        if (!context.isMoving) {
+          setTarget('stop-walking', true);
+        } else if (singleShotElapsed >= singleShotDuration * 0.65) {
+          const walkTrack = tracks.get('walking');
+          const t180Track = tracks.get('walking-turn-180');
+          if (walkTrack && t180Track) {
+            walkTrack.targetWeight = 1.0;
+            t180Track.targetWeight = 0.0;
+            if (!walkTrack.group.isPlaying) {
+              walkTrack.group.start(true, walkTrack.speedRatio);
+            }
+          }
+          if (singleShotElapsed >= singleShotDuration) {
+            isSingleShot = false;
+            currentState = 'walking';
+          }
+        }
+      } else if (currentState === 'left-turn' || currentState === 'right-turn') {
+        if (context.isMoving) {
+          setTarget('start-walking', true);
+        } else if (singleShotElapsed >= singleShotDuration * 0.75) {
+          const idleT = tracks.get('idle');
+          const turnT = tracks.get(currentState);
+          if (idleT && turnT) {
+            idleT.targetWeight = 1.0;
+            turnT.targetWeight = 0.0;
+            if (!idleT.group.isPlaying) {
+              idleT.group.start(true, idleT.speedRatio);
+            }
+          }
+          if (singleShotElapsed >= singleShotDuration) {
+            isSingleShot = false;
+            currentState = 'idle';
+          }
+        }
+      }
+    }
+
+    // 2. State selection
+    if (context.isStrafing) {
+      if (isSingleShot) isSingleShot = false;
+      if (context.isMoving) {
+        const lateral = Vector3.Dot(context.moveDir, context.camRight);
+        if (lateral < -0.35) {
+          if (currentState !== 'left-strafe-walking') {
+            setTarget('left-strafe-walking');
+          }
+        } else if (lateral > 0.35) {
+          if (currentState !== 'right-strafe-walking') {
+            setTarget('right-strafe-walking');
+          }
+        } else {
+          if (currentState !== 'walking') {
+            setTarget('walking');
+          }
+        }
+      } else {
+        if (currentState !== 'idle') setTarget('idle');
+      }
+    } else {
+      if (context.isMoving && !wasMoving) {
+        setTarget('start-walking', true);
+      } else if (context.isMoving && wasMoving) {
+        const dot = Vector3.Dot(context.moveDir, lastMoveDir);
+        if (dot < -0.6) {
+          setTarget('walking-turn-180', true);
+        } else if (!isSingleShot && currentState !== 'walking') {
+          setTarget('walking');
+        }
+      } else if (!context.isMoving && wasMoving) {
+        setTarget('stop-walking', true);
+      } else if (!context.isMoving && !wasMoving && !isSingleShot) {
+        // Stationary turning towards camera direction if angle difference exceeds threshold
+        const camAngle = Math.atan2(context.camForward.x, context.camForward.z);
+        const angleDiff = normalizeAngle(camAngle - context.rotationY);
+        if (angleDiff < -0.35) {
+          setTarget('left-turn', true);
+        } else if (angleDiff > 0.35) {
+          setTarget('right-turn', true);
+        } else if (Math.abs(angleDiff) < 0.15 && currentState !== 'idle') {
+          setTarget('idle');
+        }
+      }
+    }
+
+    wasMoving = context.isMoving;
+    if (context.isMoving) {
+      lastMoveDir.copyFrom(context.moveDir);
+    }
+  };
+
+  // Continuous before-render observer for smooth weight blending & normalization
+  const BLEND_RATE = 8.5;
+  const renderObserver = scene.onBeforeRenderObservable.add(() => {
+    const dt = Math.min(
+      0.05,
+      (scene.getEngine().getDeltaTime() || 16.6) / 1000.0
+    );
+    let totalWeight = 0;
+    for (const track of tracks.values()) {
+      const diff = track.targetWeight - track.currentWeight;
+      track.currentWeight += diff * Math.min(1.0, dt * BLEND_RATE);
+      track.currentWeight = Math.max(0, Math.min(1.0, track.currentWeight));
+      totalWeight += track.currentWeight;
+    }
+
+    if (totalWeight > 0.0001) {
+      for (const track of tracks.values()) {
+        const norm = track.currentWeight / totalWeight;
+        if (norm > 0.001) {
+          if (track.isLooping && !track.group.isPlaying) {
+            track.group.start(true, track.speedRatio);
+          }
+          track.group.setWeightForAllAnimatables(norm);
+        } else {
+          track.group.setWeightForAllAnimatables(0);
+          if (
+            track.targetWeight === 0 &&
+            track.isLooping &&
+            track.group.isPlaying
+          ) {
+            track.group.stop();
+          }
+        }
+      }
+    }
+  });
+
+  const playAnimation = (animName: string): void => {
+    const resolved = resolveSpieAnimName(animName);
+    if (!resolved) return;
+    const isSingle =
+      resolved === 'start-walking' ||
+      resolved === 'stop-walking' ||
+      resolved === 'walking-turn-180' ||
+      resolved === 'left-turn' ||
+      resolved === 'right-turn';
+    setTarget(resolved, isSingle);
+  };
 
   const dispose = (): void => {
+    if (renderObserver) {
+      scene.onBeforeRenderObservable.remove(renderObserver);
+    }
     for (const ag of instantiated.animationGroups) {
       ag.dispose();
     }
@@ -275,7 +612,8 @@ export function createSpieVisual(
     muzzleNode: null,
     muzzleFlashMesh: null,
     playAnimation,
-    getCurrentAnimation: () => currentAnim,
+    updateAnimation,
+    getCurrentAnimation: () => currentState,
     dispose,
   };
 }
@@ -568,10 +906,7 @@ export function lerpAngleY(
   target: number,
   factor: number
 ): number {
-  let diff = ((target - current + Math.PI) % (Math.PI * 2)) - Math.PI;
-  if (diff < -Math.PI) {
-    diff += Math.PI * 2;
-  }
+  const diff = normalizeAngle(target - current);
   return current + diff * Math.min(1.0, factor);
 }
 
@@ -603,6 +938,7 @@ export class LocalPlayer {
   private readonly reserveMagazines: number[] = [];
 
   // Firing & ADS input state
+  private isRightClickHeld = false;
   private isFiringHeld = false;
   private fireCooldown = 0;
   private burstShotsFired = 0;
@@ -830,40 +1166,53 @@ export class LocalPlayer {
     // Relying on `pointermove` to detect LMB state caused the weapon to stop firing
     // immediately whenever the mouse was moved.
     const onPointerDown = (e: PointerEvent): void => {
-      if (this.characterType !== 'Merc' || e.pointerType !== 'mouse') return;
+      if (e.pointerType !== 'mouse') return;
       // Ignore clicks before pointer lock is active (e.g. clicking selection menu)
       if (document.pointerLockElement === null) return;
 
-      if (e.button === 0) {
-        this.isFiringHeld = true;
-      } else if (e.button === 2) {
-        this.rmbDownTimestamp = performance.now();
-        if (this.isAdsToggled) {
-          this.isAdsToggled = false;
-          this.isAdsHeld = false;
-        } else {
-          this.isAdsHeld = true;
+      if (e.button === 2) {
+        this.isRightClickHeld = true;
+      }
+
+      if (this.characterType === 'Merc') {
+        if (e.button === 0) {
+          this.isFiringHeld = true;
+        } else if (e.button === 2) {
+          this.rmbDownTimestamp = performance.now();
+          if (this.isAdsToggled) {
+            this.isAdsToggled = false;
+            this.isAdsHeld = false;
+          } else {
+            this.isAdsHeld = true;
+          }
         }
       }
     };
 
     const onPointerUp = (e: PointerEvent): void => {
-      if (this.characterType !== 'Merc' || e.pointerType !== 'mouse') return;
+      if (e.pointerType !== 'mouse') return;
 
-      if (e.button === 0) {
-        this.isFiringHeld = false;
-        this.stopFiringBurstIfNeeded();
-      } else if (e.button === 2) {
-        const heldMs = performance.now() - this.rmbDownTimestamp;
-        if (this.isAdsHeld && heldMs < 180) {
-          // Short click toggles ADS on
-          this.isAdsToggled = true;
+      if (e.button === 2) {
+        this.isRightClickHeld = false;
+      }
+
+      if (this.characterType === 'Merc') {
+        if (e.button === 0) {
+          this.isFiringHeld = false;
+          this.stopFiringBurstIfNeeded();
+        } else if (e.button === 2) {
+          const heldMs = performance.now() - this.rmbDownTimestamp;
+          if (this.isAdsHeld && heldMs < 180) {
+            // Short click toggles ADS on
+            this.isAdsToggled = true;
+          }
+          this.isAdsHeld = false;
         }
-        this.isAdsHeld = false;
       }
     };
 
     const resetAimAndFiring = (): void => {
+      this.isRightClickHeld = false;
       this.isFiringHeld = false;
       this.isAdsHeld = false;
       this.isAdsToggled = false;
@@ -1400,15 +1749,6 @@ export class LocalPlayer {
       this.moveDirScratch.normalize();
       vx = this.moveDirScratch.x * moveSpeed;
       vz = this.moveDirScratch.z * moveSpeed;
-      this.targetRotationY = Math.atan2(
-        this.moveDirScratch.x,
-        this.moveDirScratch.z
-      );
-      this.rotationY = lerpAngleY(
-        this.rotationY,
-        this.targetRotationY,
-        dtSeconds * TURN_SMOOTH_SPEED
-      );
     }
 
     this.body.setLinvel({ x: vx, y: currentVel.y, z: vz }, true);
@@ -1423,25 +1763,56 @@ export class LocalPlayer {
       this.jumpRequested = false;
     }
 
-    let desiredAnim = 'Idle';
-    if (!grounded) {
-      desiredAnim = 'Roll';
+    // Character rotation & heading
+    const camAngle = Math.atan2(this.forwardScratch.x, this.forwardScratch.z);
+    if (this.isRightClickHeld) {
+      // In strafing mode (holding RMB): character locks facing towards camera look direction
+      this.targetRotationY = camAngle;
+      this.rotationY = lerpAngleY(
+        this.rotationY,
+        this.targetRotationY,
+        dtSeconds * 20.0
+      );
     } else if (isMovingHorizontally) {
-      desiredAnim = isSprinting ? 'Run' : 'Walk';
-    } else if (this.keys['KeyQ']) {
-      desiredAnim = 'Wave';
-    } else if (this.keys['KeyE']) {
-      desiredAnim = 'Interact';
-    } else if (this.keys['KeyF']) {
-      desiredAnim = 'Punch_Right';
-    } else if (this.keys['KeyC']) {
-      desiredAnim = 'Kick_Right';
-    } else if (this.keys['KeyR']) {
-      desiredAnim = 'Sword_Slash';
+      // In normal movement: character faces movement direction
+      this.targetRotationY = Math.atan2(
+        this.moveDirScratch.x,
+        this.moveDirScratch.z
+      );
+      this.rotationY = lerpAngleY(
+        this.rotationY,
+        this.targetRotationY,
+        dtSeconds * TURN_SMOOTH_SPEED
+      );
+    } else {
+      // When stationary: turn character towards camera direction if angle difference is significant
+      const angleDiff = normalizeAngle(camAngle - this.rotationY);
+      const activeAnim = this.visual.getCurrentAnimation();
+      if (
+        Math.abs(angleDiff) > 0.35 ||
+        activeAnim === 'left-turn' ||
+        activeAnim === 'right-turn'
+      ) {
+        this.rotationY = lerpAngleY(
+          this.rotationY,
+          camAngle,
+          dtSeconds * 3.5
+        );
+      }
     }
 
-    this.currentAnim = desiredAnim;
-    this.visual.playAnimation(desiredAnim);
+    // Update animations via the weighted blend state machine
+    this.visual.updateAnimation?.(dtSeconds, {
+      isMoving: isMovingHorizontally,
+      isStrafing: this.isRightClickHeld,
+      moveDir: this.moveDirScratch,
+      camForward: this.forwardScratch,
+      camRight: this.rightScratch,
+      camAlpha: alpha,
+      rotationY: this.rotationY,
+    });
+
+    this.currentAnim = this.visual.getCurrentAnimation();
 
     const pos = this.body.translation();
     if (pos.y < -15) {
