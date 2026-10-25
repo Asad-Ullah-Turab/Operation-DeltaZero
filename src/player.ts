@@ -77,18 +77,6 @@ const ARM_VERTEX_CORRECTION_SCALE = -1.0 / 3840.0;
 const HIDE_LOW_READY_FRAME = 10;
 const DRAW_FROM_LOW_READY_FRAME = 22;
 
-const SPIE_ANIM_SPEED_RATIOS: Record<string, number> = {
-  Idle: 1.0,
-  Walk: 1.25,
-  Run: 1.15,
-  Roll: 1.35,
-  Wave: 1.0,
-  Interact: 1.1,
-  Punch_Right: 1.2,
-  Kick_Right: 1.2,
-  Sword_Slash: 1.2,
-};
-
 export interface CharacterVisual {
   root: Mesh;
   characterType: CharacterType;
@@ -200,10 +188,28 @@ export async function loadPlayerAssetContainer(
 }
 
 /**
- * Scale factor for `spy.glb` (~437 units tall in raw FBX space)
- * to match human height (~1.75m tall).
+ * Computes the raw bounding-box height and minimum base Y of a character asset container
+ * to automatically scale and ground any custom imported character model.
  */
-const SPY_MODEL_SCALE = 0.004;
+function computeModelHeightAndBaseY(container: AssetContainer): {
+  height: number;
+  baseY: number;
+} {
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const m of container.meshes) {
+    if (m.name === '__root__' || m.getTotalVertices() === 0) continue;
+    m.computeWorldMatrix(true);
+    const b = m.getBoundingInfo().boundingBox;
+    if (b.minimumWorld.y < minY) minY = b.minimumWorld.y;
+    if (b.maximumWorld.y > maxY) maxY = b.maximumWorld.y;
+  }
+  const height = maxY - minY;
+  if (!Number.isFinite(height) || height < 0.01) {
+    return { height: 1.76, baseY: 0 };
+  }
+  return { height, baseY: Number.isFinite(minY) ? minY : 0 };
+}
 
 /**
  * Instantiates a 3D Spie character from `spy.glb`, aligns its feet with the
@@ -222,11 +228,15 @@ export function createSpieVisual(
     { doNotInstantiate: true }
   );
 
+  const { height, baseY } = computeModelHeightAndBaseY(container);
+  const targetHeight = 1.76;
+  const scale = targetHeight / height;
+
   for (const node of instantiated.rootNodes) {
     node.parent = root;
     if (node instanceof TransformNode) {
-      node.position.set(0, -PLAYER_HALF_HEIGHT, 0);
-      node.scaling.setAll(SPY_MODEL_SCALE);
+      node.position.set(0, -PLAYER_HALF_HEIGHT - baseY * scale, 0);
+      node.scaling.setAll(scale);
     }
   }
 
@@ -237,44 +247,14 @@ export function createSpieVisual(
     }
   }
 
-  const animMap = new Map<string, AnimationGroup>();
   for (const ag of instantiated.animationGroups) {
     ag.stop();
-    animMap.set(ag.name, ag);
-    const pipeIndex = ag.name.lastIndexOf('|');
-    if (pipeIndex !== -1) {
-      const shortName = ag.name.slice(pipeIndex + 1);
-      animMap.set(shortName, ag);
-    }
   }
 
   let currentAnim = 'Idle';
-  let activeGroup: AnimationGroup | null = null;
 
   const playAnimation = (animName: string): void => {
     currentAnim = animName;
-    const targetGroup =
-      animMap.get(animName) ??
-      animMap.get(`CharacterArmature|${animName}`) ??
-      animMap.get('Idle');
-
-    if (!targetGroup) return;
-
-    if (
-      activeGroup === targetGroup &&
-      targetGroup.isPlaying
-    ) {
-      return;
-    }
-
-    if (activeGroup && activeGroup !== targetGroup) {
-      activeGroup.reset();
-      activeGroup.stop();
-    }
-
-    const speedRatio = SPIE_ANIM_SPEED_RATIOS[animName] ?? 1.0;
-    targetGroup.start(true, speedRatio);
-    activeGroup = targetGroup;
   };
 
   playAnimation('Idle');
