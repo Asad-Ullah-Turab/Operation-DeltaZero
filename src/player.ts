@@ -335,7 +335,9 @@ export function createSpieVisual(
     node.parent = root;
     if (node instanceof TransformNode) {
       node.position.set(0, -PLAYER_HALF_HEIGHT - baseY * scale, 0);
-      node.scaling.setAll(scale);
+      node.scaling.x *= scale;
+      node.scaling.y *= scale;
+      node.scaling.z *= scale;
     }
   }
 
@@ -348,6 +350,36 @@ export function createSpieVisual(
 
   for (const ag of instantiated.animationGroups) {
     ag.stop();
+  }
+
+  // Strip root-motion translation displacement only from tracks that exhibit it
+  // (such as 180 turn or legacy start/stop) so in-place locomotion and natural
+  // hip sway in cyclic tracks (walking, strafing, idle) are preserved.
+  for (const ag of instantiated.animationGroups) {
+    if (
+      ag.name.includes('walking-turn-180') ||
+      ag.name.includes('start-walking') ||
+      ag.name.includes('stop-walking')
+    ) {
+      for (const ta of ag.targetedAnimations) {
+        if (
+          ta.target &&
+          typeof ta.target.name === 'string' &&
+          ta.target.name.toLowerCase().includes('hips') &&
+          ta.animation.targetProperty === 'position'
+        ) {
+          const keys = ta.animation.getKeys();
+          const firstVal = keys[0]?.value;
+          if (firstVal instanceof Vector3) {
+            for (const k of keys) {
+              if (k.value instanceof Vector3) {
+                k.value.copyFrom(firstVal);
+              }
+            }
+          }
+        }
+      }
+    }
   }
 
   const findGroup = (target: string): AnimationGroup | undefined => {
@@ -383,10 +415,32 @@ export function createSpieVisual(
   let singleShotDuration = 0;
 
   const setTarget = (name: SpieAnimationName, isSingle = false): void => {
+    if (currentState === name && !isSingle) return;
+    const oldState = currentState;
     currentState = name;
     isSingleShot = isSingle;
     const targetTrack = tracks.get(name);
     if (!targetTrack) return;
+
+    // Mutually exclusive opposing strafes: immediately silence opposing strafe
+    // so left and right strafe tracks never fight or cancel each other out
+    if (name === 'left-strafe-walking') {
+      const opp = tracks.get('right-strafe-walking');
+      if (opp) {
+        opp.targetWeight = 0;
+        opp.currentWeight = 0;
+        opp.group.stop();
+        opp.group.setWeightForAllAnimatables(0);
+      }
+    } else if (name === 'right-strafe-walking') {
+      const opp = tracks.get('left-strafe-walking');
+      if (opp) {
+        opp.targetWeight = 0;
+        opp.currentWeight = 0;
+        opp.group.stop();
+        opp.group.setWeightForAllAnimatables(0);
+      }
+    }
 
     for (const [tName, track] of tracks) {
       if (tName === name) {
@@ -396,7 +450,20 @@ export function createSpieVisual(
           singleShotDuration = track.durationSec;
           track.group.reset();
           track.group.start(false, track.speedRatio);
-        } else if (!track.group.isPlaying) {
+        } else {
+          // If starting locomotion from stationary idle or switching strafe direction,
+          // grant immediate authority so the legs pedal instantly without lag or sliding
+          if (oldState === 'idle') {
+            track.currentWeight = Math.max(track.currentWeight, 0.55);
+          } else if (
+            (name === 'left-strafe-walking' &&
+              oldState === 'right-strafe-walking') ||
+            (name === 'right-strafe-walking' &&
+              oldState === 'left-strafe-walking')
+          ) {
+            track.currentWeight = 1.0;
+          }
+          track.group.reset();
           track.group.start(true, track.speedRatio);
         }
       } else {
@@ -416,45 +483,9 @@ export function createSpieVisual(
     if (isSingleShot) {
       singleShotElapsed += dtSeconds;
 
-      if (currentState === 'start-walking') {
+      if (currentState === 'walking-turn-180') {
         if (!context.isMoving) {
-          setTarget('stop-walking', true);
-        } else if (singleShotElapsed >= singleShotDuration * 0.65) {
-          const walkTrack = tracks.get('walking');
-          const swTrack = tracks.get('start-walking');
-          if (walkTrack && swTrack) {
-            walkTrack.targetWeight = 1.0;
-            swTrack.targetWeight = 0.0;
-            if (!walkTrack.group.isPlaying) {
-              walkTrack.group.start(true, walkTrack.speedRatio);
-            }
-          }
-          if (singleShotElapsed >= singleShotDuration) {
-            isSingleShot = false;
-            currentState = 'walking';
-          }
-        }
-      } else if (currentState === 'stop-walking') {
-        if (context.isMoving) {
-          setTarget('start-walking', true);
-        } else if (singleShotElapsed >= singleShotDuration * 0.65) {
-          const idleT = tracks.get('idle');
-          const stopT = tracks.get('stop-walking');
-          if (idleT && stopT) {
-            idleT.targetWeight = 1.0;
-            stopT.targetWeight = 0.0;
-            if (!idleT.group.isPlaying) {
-              idleT.group.start(true, idleT.speedRatio);
-            }
-          }
-          if (singleShotElapsed >= singleShotDuration) {
-            isSingleShot = false;
-            currentState = 'idle';
-          }
-        }
-      } else if (currentState === 'walking-turn-180') {
-        if (!context.isMoving) {
-          setTarget('stop-walking', true);
+          setTarget('idle');
         } else if (singleShotElapsed >= singleShotDuration * 0.65) {
           const walkTrack = tracks.get('walking');
           const t180Track = tracks.get('walking-turn-180');
@@ -462,6 +493,7 @@ export function createSpieVisual(
             walkTrack.targetWeight = 1.0;
             t180Track.targetWeight = 0.0;
             if (!walkTrack.group.isPlaying) {
+              walkTrack.group.reset();
               walkTrack.group.start(true, walkTrack.speedRatio);
             }
           }
@@ -472,7 +504,7 @@ export function createSpieVisual(
         }
       } else if (currentState === 'left-turn' || currentState === 'right-turn') {
         if (!context.isMoving) {
-          setTarget('stop-walking', true);
+          setTarget('idle');
         } else if (singleShotElapsed >= singleShotDuration * 0.65) {
           const walkTrack = tracks.get('walking');
           const turnT = tracks.get(currentState);
@@ -480,6 +512,7 @@ export function createSpieVisual(
             walkTrack.targetWeight = 1.0;
             turnT.targetWeight = 0.0;
             if (!walkTrack.group.isPlaying) {
+              walkTrack.group.reset();
               walkTrack.group.start(true, walkTrack.speedRatio);
             }
           }
@@ -514,19 +547,8 @@ export function createSpieVisual(
       }
     } else {
       if (context.isMoving && !wasMoving) {
-        // Turning to movement direction when starting to move from stationary standing
-        const moveAngle = Math.atan2(context.moveDir.x, context.moveDir.z);
-        const turnAngle = normalizeAngle(moveAngle - context.rotationY);
-
-        if (turnAngle <= -0.65 && turnAngle > -2.35) {
-          setTarget('left-turn', true);
-        } else if (turnAngle >= 0.65 && turnAngle < 2.35) {
-          setTarget('right-turn', true);
-        } else if (Math.abs(turnAngle) >= 2.35) {
-          setTarget('walking-turn-180', true);
-        } else {
-          setTarget('start-walking', true);
-        }
+        // Immediately start paddling the legs in walking animation on movement start
+        setTarget('walking');
       } else if (context.isMoving && wasMoving) {
         const dot = Vector3.Dot(context.moveDir, lastMoveDir);
         if (dot < -0.6) {
@@ -535,7 +557,8 @@ export function createSpieVisual(
           setTarget('walking');
         }
       } else if (!context.isMoving && wasMoving) {
-        setTarget('stop-walking', true);
+        // When stopping, smoothly crossfade directly to idle with zero overhead/teleport
+        setTarget('idle');
       } else if (!context.isMoving && !wasMoving && !isSingleShot) {
         // When stationary standing: do not follow camera orbit; remain in idle
         if (currentState !== 'idle') {
@@ -551,17 +574,26 @@ export function createSpieVisual(
   };
 
   // Continuous before-render observer for smooth weight blending & normalization
-  const BLEND_RATE = 8.5;
+  const CROSSFADE_RATE = 14.0; // Linear transition rate: full 0 -> 1 in ~70ms (4-5 frames)
   const renderObserver = scene.onBeforeRenderObservable.add(() => {
     const dt = Math.min(
       0.05,
       (scene.getEngine().getDeltaTime() || 16.6) / 1000.0
     );
+    const step = dt * CROSSFADE_RATE;
     let totalWeight = 0;
     for (const track of tracks.values()) {
-      const diff = track.targetWeight - track.currentWeight;
-      track.currentWeight += diff * Math.min(1.0, dt * BLEND_RATE);
-      track.currentWeight = Math.max(0, Math.min(1.0, track.currentWeight));
+      if (track.currentWeight < track.targetWeight) {
+        track.currentWeight = Math.min(
+          track.targetWeight,
+          track.currentWeight + step
+        );
+      } else if (track.currentWeight > track.targetWeight) {
+        track.currentWeight = Math.max(
+          track.targetWeight,
+          track.currentWeight - step
+        );
+      }
       totalWeight += track.currentWeight;
     }
 
