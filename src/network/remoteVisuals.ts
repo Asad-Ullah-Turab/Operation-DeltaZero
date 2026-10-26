@@ -5,7 +5,7 @@
 import type { Scene } from '@babylonjs/core/scene';
 import type { CharacterType } from '../../shared';
 import {
-  createSpieVisual,
+  createSpyVisual,
   createMercWorldVisual,
   type CharacterAssets,
   type CharacterVisual,
@@ -27,10 +27,10 @@ export function createRemoteVisual(
       assets.mercenaryContainer
     );
   }
-  return createSpieVisual(
+  return createSpyVisual(
     `remote_spie_${sessionId}`,
     scene,
-    assets.spieContainer
+    assets.spyContainer
   );
 }
 

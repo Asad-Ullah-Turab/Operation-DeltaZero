@@ -2,12 +2,12 @@
  * Resolves raw GLTF animation group names to canonical Spy animation identifiers.
  */
 
-import type { SpieAnimationName } from '../../types';
+import type { SpyAnimationName } from '../../types';
 
 /**
- * Matches raw Mixamo/GLTF track names to canonical Spie animation track names.
+ * Matches raw Mixamo/GLTF track names to canonical Spy animation track names.
  */
-export function resolveSpieAnimName(rawName: string): SpieAnimationName | null {
+export function resolveSpyAnimName(rawName: string): SpyAnimationName | null {
   const lower = rawName.toLowerCase();
   if (lower === 'idle') return 'idle';
   if (lower === 'walking' || lower === 'walk' || lower === 'run') return 'walking';

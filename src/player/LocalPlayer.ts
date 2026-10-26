@@ -34,8 +34,8 @@ import {
   WeaponController,
   ParkourController,
   updateMercFirstPerson,
-  updateSpieThirdPerson,
-  toggleSpieCrouch,
+  updateSpyThirdPerson,
+  toggleSpyCrouch,
 } from './systems';
 
 export class LocalPlayer {
@@ -57,7 +57,7 @@ export class LocalPlayer {
   private readonly weaponController = new WeaponController();
   private readonly parkourController = new ParkourController();
 
-  // Spie crouch state & Merc first-person viewmodel rig
+  // Spy crouch state & Merc first-person viewmodel rig
   private isCrouchToggled = false;
   private readonly viewmodelRig: TransformNode | null = null;
   private wasGrounded = true;
@@ -132,7 +132,7 @@ export class LocalPlayer {
       getIsDead: () => this.isDead,
       getAdsBlend: () => this.viewmodelMotion.adsBlend,
       onDebugDamage: () => this.takeDamage(25, 'torso'),
-      onToggleCrouch: () => this.toggleSpieCrouch(),
+      onToggleCrouch: () => this.toggleSpyCrouch(),
       onReload: () => this.tryTacticalReload(),
       onHide: () => {
         this.visual.triggerHide?.();
@@ -279,7 +279,7 @@ export class LocalPlayer {
     if (this.characterType === 'Merc') {
       this.updateMercFirstPerson(dtSeconds);
     } else {
-      this.updateSpieThirdPerson(arcCamera, dtSeconds);
+      this.updateSpyThirdPerson(arcCamera, dtSeconds);
     }
   }
 
@@ -325,8 +325,8 @@ export class LocalPlayer {
     this.currentAnim = res.currentAnim;
   }
 
-  private toggleSpieCrouch(): void {
-    toggleSpieCrouch(
+  private toggleSpyCrouch(): void {
+    toggleSpyCrouch(
       this.parkourController.isClimbing,
       this.isCrouchToggled,
       this.inputController.keys,
@@ -337,11 +337,11 @@ export class LocalPlayer {
     );
   }
 
-  private updateSpieThirdPerson(
+  private updateSpyThirdPerson(
     camera: ArcRotateCamera | null,
     dtSeconds: number
   ): void {
-    this.currentAnim = updateSpieThirdPerson(
+    this.currentAnim = updateSpyThirdPerson(
       {
         body: this.body,
         mesh: this.mesh,

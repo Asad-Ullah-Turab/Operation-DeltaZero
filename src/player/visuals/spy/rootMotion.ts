@@ -11,7 +11,7 @@ import type { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
  * - Interpolates horizontal drift in stand-to-crouch and crouch-to-stand for seamless transitions
  * - Smoothly blends hang-to-crouch hip position towards crouch-idle
  */
-export function stripSpieRootMotion(
+export function stripSpyRootMotion(
   animationGroups: AnimationGroup[],
   scale: number
 ): void {

@@ -12,7 +12,7 @@ import type { CharacterType } from '../../shared';
 export type { CharacterType };
 
 export interface CharacterAssets {
-  spieContainer: AssetContainer;
+  spyContainer: AssetContainer;
   mercContainer: AssetContainer;
   mercenaryContainer: AssetContainer;
 }
@@ -26,7 +26,7 @@ export interface NetworkShotEvent {
   dirZ: number;
 }
 
-export interface SpieAnimContext {
+export interface SpyAnimContext {
   isMoving: boolean;
   isStrafing: boolean; // right click held
   moveDir: Vector3;
@@ -45,7 +45,7 @@ export interface CharacterVisual {
   muzzleNode: TransformNode | null;
   muzzleFlashMesh: Mesh | null;
   playAnimation: (animName: string) => void;
-  updateAnimation?: (dtSeconds: number, context: SpieAnimContext) => void;
+  updateAnimation?: (dtSeconds: number, context: SpyAnimContext) => void;
   triggerReload?: () => boolean;
   triggerHide?: () => void;
   getCurrentAnimation: () => string;
@@ -53,7 +53,7 @@ export interface CharacterVisual {
   dispose: () => void;
 }
 
-export type SpieAnimationName =
+export type SpyAnimationName =
   | 'idle'
   | 'walking'
   | 'start-walking'
@@ -70,8 +70,8 @@ export type SpieAnimationName =
   | 'jump'
   | 'hang-to-crouch';
 
-export interface SpieTrack {
-  name: SpieAnimationName;
+export interface SpyTrack {
+  name: SpyAnimationName;
   group: AnimationGroup;
   currentWeight: number;
   targetWeight: number;
@@ -80,8 +80,8 @@ export interface SpieTrack {
   durationSec: number;
 }
 
-export const SPIE_TRACK_CONFIGS: Array<{
-  name: SpieAnimationName;
+export const SPY_TRACK_CONFIGS: Array<{
+  name: SpyAnimationName;
   isLooping: boolean;
   speedRatio: number;
 }> = [

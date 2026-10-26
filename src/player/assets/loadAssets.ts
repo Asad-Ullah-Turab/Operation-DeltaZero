@@ -15,7 +15,7 @@ import { normalizeMercContainerGeometry } from './normalizeMerc';
 export async function loadCharacterAssets(
   scene: Scene
 ): Promise<CharacterAssets> {
-  const [spieContainer, mercContainer, mercenaryContainer] = await Promise.all([
+  const [spyContainer, mercContainer, mercenaryContainer] = await Promise.all([
     SceneLoader.LoadAssetContainerAsync(
       ASSET_BASE_PATH,
       CHARACTER_ASSET_FILES.SPY,
@@ -35,5 +35,5 @@ export async function loadCharacterAssets(
 
   normalizeMercContainerGeometry(mercContainer);
 
-  return { spieContainer, mercContainer, mercenaryContainer };
+  return { spyContainer, mercContainer, mercenaryContainer };
 }

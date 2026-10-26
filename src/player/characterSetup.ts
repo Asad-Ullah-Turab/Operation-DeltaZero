@@ -23,7 +23,7 @@ import type {
   CharacterVisual,
 } from './types';
 import { createMercVisual } from './visuals/merc';
-import { createSpieVisual } from './visuals/spy';
+import { createSpyVisual } from './visuals/spy';
 import type { HealthController, WeaponController } from './systems';
 
 export interface LocalCharacterSetup {
@@ -84,10 +84,10 @@ export function setupLocalCharacter(
     };
   }
 
-  const visual = createSpieVisual(
+  const visual = createSpyVisual(
     'local_spie_player',
     scene,
-    assets.spieContainer
+    assets.spyContainer
   );
   const mesh = visual.root;
   const currentAnim = 'Idle';

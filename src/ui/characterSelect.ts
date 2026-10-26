@@ -12,7 +12,7 @@ export function showCharacterSelectMenu(
   onSelect: (type: CharacterType) => void
 ): void {
   const menuEl = getHtmlElement('character-select-menu');
-  const spieBtn = getHtmlElement('select-spie-btn');
+  const spyBtn = getHtmlElement('select-spie-btn');
   const mercBtn = getHtmlElement('select-merc-btn');
 
   if (menuEl) {
@@ -20,11 +20,11 @@ export function showCharacterSelectMenu(
   }
 
   const cleanup = (): void => {
-    spieBtn?.removeEventListener('click', handleSpie);
+    spyBtn?.removeEventListener('click', handleSpy);
     mercBtn?.removeEventListener('click', handleMerc);
   };
 
-  const handleSpie = (): void => {
+  const handleSpy = (): void => {
     cleanup();
     if (menuEl) menuEl.classList.add('hidden');
     onSelect('Spie');
@@ -36,7 +36,7 @@ export function showCharacterSelectMenu(
     onSelect('Merc');
   };
 
-  spieBtn?.addEventListener('click', handleSpie);
+  spyBtn?.addEventListener('click', handleSpy);
   mercBtn?.addEventListener('click', handleMerc);
 }
 

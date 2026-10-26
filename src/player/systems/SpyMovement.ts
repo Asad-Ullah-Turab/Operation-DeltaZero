@@ -17,7 +17,7 @@ import { lerpAngleY } from '../../utils/math';
 import type { CharacterVisual } from '../types';
 import type { ParkourController } from './ParkourController';
 
-export interface SpieMovementContext {
+export interface SpyMovementContext {
   body: RAPIER.RigidBody;
   mesh: Mesh;
   visual: CharacterVisual;
@@ -38,7 +38,7 @@ export interface SpieMovementContext {
   onCrouchChanged: (isCrouched: boolean) => void;
 }
 
-export function toggleSpieCrouch(
+export function toggleSpyCrouch(
   isClimbing: boolean,
   isCrouchToggled: boolean,
   keys: Record<string, boolean>,
@@ -75,8 +75,8 @@ export function toggleSpieCrouch(
   }
 }
 
-export function updateSpieThirdPerson(
-  ctx: SpieMovementContext,
+export function updateSpyThirdPerson(
+  ctx: SpyMovementContext,
   camera: ArcRotateCamera | null,
   dtSeconds: number
 ): string {

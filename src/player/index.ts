@@ -7,17 +7,17 @@ export { LocalPlayer } from './LocalPlayer';
 export type {
   CharacterAssets,
   NetworkShotEvent,
-  SpieAnimContext,
+  SpyAnimContext,
   CharacterVisual,
-  SpieAnimationName,
-  SpieTrack,
+  SpyAnimationName,
+  SpyTrack,
 } from './types';
-export { SPIE_TRACK_CONFIGS } from './types';
+export { SPY_TRACK_CONFIGS } from './types';
 
 export {
   loadCharacterAssets,
 } from './assets';
 
-export { createSpieVisual } from './visuals/spy';
+export { createSpyVisual } from './visuals/spy';
 export { createMercVisual, createMercWorldVisual } from './visuals/merc';
 export * from './systems';

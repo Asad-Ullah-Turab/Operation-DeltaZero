@@ -4,4 +4,4 @@
 
 import { createHitboxClassifier } from '../hitboxClassifier';
 
-export const createSpieHitboxClassifier = createHitboxClassifier;
+export const createSpyHitboxClassifier = createHitboxClassifier;

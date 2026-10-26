@@ -14,20 +14,20 @@ import type { Skeleton } from '@babylonjs/core/Bones/skeleton';
 import { PLAYER_HALF_HEIGHT } from '../../../config/arena';
 import type {
   CharacterVisual,
-  SpieAnimContext,
-  SpieAnimationName,
+  SpyAnimContext,
+  SpyAnimationName,
 } from '../../types';
 import { computeModelHeightAndBaseY } from '../../assets/boundingBox';
-import { resolveSpieAnimName } from './animNames';
-import { stripSpieRootMotion } from './rootMotion';
-import { createSpieHitboxClassifier } from './hitboxes';
-import { buildSpieTracks, updateSpieCrossfade } from './tracks';
+import { resolveSpyAnimName } from './animNames';
+import { stripSpyRootMotion } from './rootMotion';
+import { createSpyHitboxClassifier } from './hitboxes';
+import { buildSpyTracks, updateSpyCrossfade } from './tracks';
 
 /**
- * Instantiates a 3D Spie character from `spy.glb`, aligns its feet with the
+ * Instantiates a 3D Spy character from `spy.glb`, aligns its feet with the
  * bottom of the physics collider (-PLAYER_HALF_HEIGHT), and manages animations.
  */
-export function createSpieVisual(
+export function createSpyVisual(
   name: string,
   scene: Scene,
   container: AssetContainer
@@ -65,16 +65,16 @@ export function createSpieVisual(
     ag.stop();
   }
 
-  stripSpieRootMotion(instantiated.animationGroups, scale);
+  stripSpyRootMotion(instantiated.animationGroups, scale);
 
-  const tracks = buildSpieTracks(instantiated.animationGroups);
+  const tracks = buildSpyTracks(instantiated.animationGroups);
 
-  let currentState: SpieAnimationName = 'idle';
+  let currentState: SpyAnimationName = 'idle';
   let isSingleShot = false;
   let singleShotElapsed = 0;
   let singleShotDuration = 0;
 
-  const setTarget = (trackName: SpieAnimationName, isSingle = false): void => {
+  const setTarget = (trackName: SpyAnimationName, isSingle = false): void => {
     if (currentState === trackName && !isSingle) return;
     const oldState = currentState;
     currentState = trackName;
@@ -134,7 +134,7 @@ export function createSpieVisual(
 
   const updateAnimation = (
     dtSeconds: number,
-    context: SpieAnimContext
+    context: SpyAnimContext
   ): void => {
     if (isSingleShot) {
       singleShotElapsed += dtSeconds;
@@ -315,11 +315,11 @@ export function createSpieVisual(
       0.05,
       (scene.getEngine().getDeltaTime() || 16.6) / 1000.0
     );
-    updateSpieCrossfade(tracks, dt);
+    updateSpyCrossfade(tracks, dt);
   });
 
   const playAnimation = (animName: string): void => {
-    const resolved = resolveSpieAnimName(animName);
+    const resolved = resolveSpyAnimName(animName);
     if (!resolved) return;
     const isSingle =
       resolved === 'start-walking' ||
@@ -337,7 +337,7 @@ export function createSpieVisual(
   const rootTransformNodes = instantiated.rootNodes.filter(
     (n): n is TransformNode => n instanceof TransformNode
   );
-  const getHitZone = createSpieHitboxClassifier(rootTransformNodes, root);
+  const getHitZone = createSpyHitboxClassifier(rootTransformNodes, root);
 
   const dispose = (): void => {
     if (renderObserver) {

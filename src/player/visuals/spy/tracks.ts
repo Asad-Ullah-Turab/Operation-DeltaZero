@@ -4,27 +4,27 @@
 
 import type { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
 import {
-  SPIE_TRACK_CONFIGS,
-  type SpieAnimationName,
-  type SpieTrack,
+  SPY_TRACK_CONFIGS,
+  type SpyAnimationName,
+  type SpyTrack,
 } from '../../types';
 
 export const CROSSFADE_RATE = 14.0; // Linear transition rate: full 0 -> 1 in ~70ms (4-5 frames)
 
 /**
- * Maps instantiated animation groups to typed SpieTrack records based on configurations.
+ * Maps instantiated animation groups to typed SpyTrack records based on configurations.
  */
-export function buildSpieTracks(
+export function buildSpyTracks(
   animationGroups: AnimationGroup[]
-): Map<SpieAnimationName, SpieTrack> {
+): Map<SpyAnimationName, SpyTrack> {
   const findGroup = (target: string): AnimationGroup | undefined => {
     return animationGroups.find(
       (ag) => ag.name === target || ag.name.endsWith('|' + target)
     );
   };
 
-  const tracks = new Map<SpieAnimationName, SpieTrack>();
-  for (const cfg of SPIE_TRACK_CONFIGS) {
+  const tracks = new Map<SpyAnimationName, SpyTrack>();
+  for (const cfg of SPY_TRACK_CONFIGS) {
     const ag = findGroup(cfg.name);
     if (ag) {
       const durationSec = (ag.to - ag.from) / (60.0 * cfg.speedRatio);
@@ -50,8 +50,8 @@ export function buildSpieTracks(
 /**
  * Updates crossfade weights towards target weights and normalizes animatable weights.
  */
-export function updateSpieCrossfade(
-  tracks: Map<SpieAnimationName, SpieTrack>,
+export function updateSpyCrossfade(
+  tracks: Map<SpyAnimationName, SpyTrack>,
   dtSeconds: number,
   rate = CROSSFADE_RATE
 ): void {

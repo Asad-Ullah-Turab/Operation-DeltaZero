@@ -9,8 +9,8 @@ export { WeaponController } from './WeaponController';
 export { ParkourController, type LedgeInfo } from './ParkourController';
 export { updateMercFirstPerson, type MercMovementContext } from './MercMovement';
 export {
-  updateSpieThirdPerson,
-  toggleSpieCrouch,
-  type SpieMovementContext,
+  updateSpyThirdPerson,
+  toggleSpyCrouch,
+  type SpyMovementContext,
 } from './SpyMovement';
 
