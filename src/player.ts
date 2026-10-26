@@ -18,8 +18,9 @@ import {
   isPlayerGrounded,
 } from './physics';
 import { CombatEffectsManager, createMuzzleFlashMesh } from './combat';
+import { clamp, type CharacterType } from '../shared';
 
-export type CharacterType = 'Spie' | 'Merc';
+export type { CharacterType };
 
 export interface CharacterAssets {
   spieContainer: AssetContainer;
@@ -103,10 +104,6 @@ export interface CharacterVisual {
   getCurrentAnimation: () => string;
   getHitZone?: (hitPoint: Vector3) => 'head' | 'torso' | 'limbs';
   dispose: () => void;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
 }
 
 /**

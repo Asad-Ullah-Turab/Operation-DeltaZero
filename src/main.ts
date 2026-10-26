@@ -17,11 +17,11 @@ import {
 } from './physics';
 import {
   LocalPlayer,
-  CharacterType,
   loadCharacterAssets,
 } from './player';
 import { CombatEffectsManager } from './combat';
 import { NetworkManager } from './network';
+import { getDamageForHitZone, type CharacterType } from '../shared';
 
 function showCharacterSelectMenu(onSelect: (type: CharacterType) => void): void {
   const menuEl = document.getElementById('character-select-menu');
@@ -230,7 +230,7 @@ async function bootstrap(): Promise<void> {
     if (data.isLocal && data.player) {
       if (data.player.characterType === 'Spie') {
         const zone = data.player.classifyHitZone(event.hitPoint);
-        const damage = zone === 'head' ? 50 : zone === 'torso' ? 25 : 10;
+        const damage = getDamageForHitZone(zone);
         data.player.takeDamage(damage, zone);
       }
     } else if (data.isRemote && data.sessionId && data.remotePlayer) {
@@ -238,7 +238,7 @@ async function bootstrap(): Promise<void> {
         const zone = data.remotePlayer.visual.getHitZone
           ? data.remotePlayer.visual.getHitZone(event.hitPoint)
           : 'torso';
-        const damage = zone === 'head' ? 50 : zone === 'torso' ? 25 : 10;
+        const damage = getDamageForHitZone(zone);
         network.sendPlayerHit(data.sessionId, damage, zone);
       }
     }

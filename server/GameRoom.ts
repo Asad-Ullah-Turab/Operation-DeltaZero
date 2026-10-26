@@ -1,52 +1,34 @@
 import * as colyseusPkg from 'colyseus';
 import type { Client, Room as RoomType } from 'colyseus';
 import { GameState, Player, CharacterType } from './schema/GameState';
+import {
+  clamp,
+  sanitizeCharacterType,
+  MSG_SELECT_CHARACTER,
+  MSG_MOVE,
+  MSG_JUMP,
+  MSG_SHOOT,
+  MSG_PLAYER_SHOOT,
+  MSG_PLAYER_HIT,
+  MSG_TAKE_DAMAGE,
+  MSG_PLAYER_DIED,
+  MSG_RESPAWN,
+  MSG_PLAYER_RESPAWNED,
+  type MoveMessage,
+  type JumpMessage,
+  type SelectCharacterMessage,
+  type ShootMessage,
+  type JoinOptions,
+} from '../shared';
 
 const { Room } = ((colyseusPkg as unknown as { default?: typeof colyseusPkg }).default ??
   colyseusPkg) as { Room: typeof RoomType };
 
-export interface MoveMessage {
-  x: number;
-  y: number;
-  z: number;
-  rotationY: number;
-  anim?: string;
-  characterType?: CharacterType;
-}
-
-export interface JumpMessage {
-  y?: number;
-  anim?: string;
-}
-
-export interface SelectCharacterMessage {
-  characterType: CharacterType;
-}
-
-export interface ShootMessage {
-  originX: number;
-  originY: number;
-  originZ: number;
-  dirX: number;
-  dirY: number;
-  dirZ: number;
-}
-
-export interface JoinOptions {
-  characterType?: CharacterType;
-}
+export type { MoveMessage, JumpMessage, SelectCharacterMessage, ShootMessage, JoinOptions };
 
 const ARENA_BOUND = 60;
 const MIN_Y = -5;
 const MAX_Y = 50;
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
-
-function sanitizeCharacterType(value: unknown): CharacterType {
-  return value === 'Merc' ? 'Merc' : 'Spie';
-}
 
 export class GameRoom extends Room<GameState> {
   maxClients = 32;
@@ -58,7 +40,7 @@ export class GameRoom extends Room<GameState> {
     this.setPatchRate(30);
 
     // Handle character selection updates
-    this.onMessage('selectCharacter', (client: Client, data: SelectCharacterMessage) => {
+    this.onMessage(MSG_SELECT_CHARACTER, (client: Client, data: SelectCharacterMessage) => {
       const player = this.state.players.get(client.sessionId);
       if (!player || typeof data !== 'object' || data === null) return;
 
@@ -68,7 +50,7 @@ export class GameRoom extends Room<GameState> {
     });
 
     // Handle positional & rotational updates with server-side validation
-    this.onMessage('move', (client: Client, data: MoveMessage) => {
+    this.onMessage(MSG_MOVE, (client: Client, data: MoveMessage) => {
       const player = this.state.players.get(client.sessionId);
       if (!player || typeof data !== 'object' || data === null) return;
 
@@ -92,7 +74,7 @@ export class GameRoom extends Room<GameState> {
     });
 
     // Handle jump notifications with vertical bounds validation
-    this.onMessage('jump', (client: Client, data?: JumpMessage) => {
+    this.onMessage(MSG_JUMP, (client: Client, data?: JumpMessage) => {
       const player = this.state.players.get(client.sessionId);
       if (!player) return;
 
@@ -107,7 +89,7 @@ export class GameRoom extends Room<GameState> {
     });
 
     // Handle lightweight weapon shoot events and broadcast to remote clients
-    this.onMessage('shoot', (client: Client, data: ShootMessage) => {
+    this.onMessage(MSG_SHOOT, (client: Client, data: ShootMessage) => {
       const player = this.state.players.get(client.sessionId);
       if (!player || typeof data !== 'object' || data === null) return;
 
@@ -123,7 +105,7 @@ export class GameRoom extends Room<GameState> {
         if (len < 0.0001) return;
 
         this.broadcast(
-          'playerShoot',
+          MSG_PLAYER_SHOOT,
           {
             sessionId: client.sessionId,
             originX: clamp(data.originX, -ARENA_BOUND, ARENA_BOUND),
@@ -140,7 +122,7 @@ export class GameRoom extends Room<GameState> {
 
     // Handle damage notification from shooter to victim
     this.onMessage(
-      'playerHit',
+      MSG_PLAYER_HIT,
       (
         client: Client,
         data: { targetSessionId: string; damage: number; zone?: string }
@@ -148,7 +130,7 @@ export class GameRoom extends Room<GameState> {
         if (!data || typeof data.targetSessionId !== 'string') return;
         for (const otherClient of this.clients) {
           if (otherClient.sessionId === data.targetSessionId) {
-            otherClient.send('takeDamage', {
+            otherClient.send(MSG_TAKE_DAMAGE, {
               attackerSessionId: client.sessionId,
               damage: Number.isFinite(data.damage) ? data.damage : 25,
               zone: typeof data.zone === 'string' ? data.zone : 'torso',
@@ -160,13 +142,13 @@ export class GameRoom extends Room<GameState> {
     );
 
     // Handle player elimination event
-    this.onMessage('playerDied', (client: Client) => {
-      this.broadcast('playerDied', { sessionId: client.sessionId }, { except: client });
+    this.onMessage(MSG_PLAYER_DIED, (client: Client) => {
+      this.broadcast(MSG_PLAYER_DIED, { sessionId: client.sessionId }, { except: client });
     });
 
     // Handle player respawn event
     this.onMessage(
-      'respawn',
+      MSG_RESPAWN,
       (
         client: Client,
         data: { characterType?: CharacterType; x: number; y: number; z: number }
@@ -188,7 +170,7 @@ export class GameRoom extends Room<GameState> {
         }
         player.anim = player.characterType === 'Merc' ? 'Draw' : 'Idle';
 
-        this.broadcast('playerRespawned', {
+        this.broadcast(MSG_PLAYER_RESPAWNED, {
           sessionId: client.sessionId,
           characterType: player.characterType,
           x: player.x,

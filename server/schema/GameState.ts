@@ -1,6 +1,7 @@
 import { Schema, MapSchema, type } from '@colyseus/schema';
+import type { CharacterType } from '../../shared';
 
-export type CharacterType = 'Spie' | 'Merc';
+export type { CharacterType };
 
 export class Player extends Schema {
   @type('number') x = 0;

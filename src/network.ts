@@ -5,7 +5,6 @@ import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import {
   LocalPlayer,
   CharacterAssets,
-  CharacterType,
   CharacterVisual,
   createSpieVisual,
   createMercWorldVisual,
@@ -13,6 +12,20 @@ import {
 } from './player';
 import { CombatEffectsManager } from './combat';
 import { PLAYER_HALF_HEIGHT, PLAYER_RADIUS } from './physics';
+import {
+  sanitizeCharacterType,
+  MSG_SELECT_CHARACTER,
+  MSG_MOVE,
+  MSG_JUMP,
+  MSG_SHOOT,
+  MSG_PLAYER_SHOOT,
+  MSG_PLAYER_HIT,
+  MSG_TAKE_DAMAGE,
+  MSG_PLAYER_DIED,
+  MSG_RESPAWN,
+  MSG_PLAYER_RESPAWNED,
+  type CharacterType,
+} from '../shared';
 
 interface SyncedPlayerState {
   x: number;
@@ -54,9 +67,7 @@ interface RemotePlayer {
   body?: RAPIER.RigidBody;
 }
 
-function normalizeCharacterType(value: unknown): CharacterType {
-  return value === 'Merc' ? 'Merc' : 'Spie';
-}
+const normalizeCharacterType = sanitizeCharacterType;
 
 export class NetworkManager {
   private readonly scene: Scene;
@@ -100,7 +111,7 @@ export class NetworkManager {
       console.log(
         `[Colyseus] Joined room ${this.room.roomId} as ${this.room.sessionId} (${characterType})`
       );
-      this.room.send('selectCharacter', { characterType });
+      this.room.send(MSG_SELECT_CHARACTER, { characterType });
       this.bindStateHandlers(this.room);
     } catch (err) {
       console.warn(
@@ -130,7 +141,7 @@ export class NetworkManager {
 
   private bindStateHandlers(room: Colyseus.Room<SyncedRoomState>): void {
     // Listen for remote player weapon shoot events
-    room.onMessage('playerShoot', (payload: RemoteShootPayload) => {
+    room.onMessage(MSG_PLAYER_SHOOT, (payload: RemoteShootPayload) => {
       if (!payload || typeof payload !== 'object') return;
       const remote = this.remotePlayers.get(payload.sessionId);
 
@@ -161,7 +172,7 @@ export class NetworkManager {
 
     // Listen for authoritative damage events
     room.onMessage(
-      'takeDamage',
+      MSG_TAKE_DAMAGE,
       (payload: { attackerSessionId?: string; damage: number; zone?: string }) => {
         if (!payload || typeof payload.damage !== 'number') return;
         if (this.localPlayer && !this.localPlayer.isDead) {
@@ -171,7 +182,7 @@ export class NetworkManager {
     );
 
     // Listen for remote player elimination
-    room.onMessage('playerDied', (payload: { sessionId: string }) => {
+    room.onMessage(MSG_PLAYER_DIED, (payload: { sessionId: string }) => {
       if (!payload || !payload.sessionId) return;
       const remote = this.remotePlayers.get(payload.sessionId);
       if (remote) {
@@ -181,7 +192,7 @@ export class NetworkManager {
 
     // Listen for remote player respawn
     room.onMessage(
-      'playerRespawned',
+      MSG_PLAYER_RESPAWNED,
       (payload: {
         sessionId: string;
         characterType?: CharacterType;
@@ -357,13 +368,13 @@ export class NetworkManager {
     zone: string
   ): void {
     if (this.room) {
-      this.room.send('playerHit', { targetSessionId, damage, zone });
+      this.room.send(MSG_PLAYER_HIT, { targetSessionId, damage, zone });
     }
   }
 
   public sendPlayerDied(): void {
     if (this.room) {
-      this.room.send('playerDied', {});
+      this.room.send(MSG_PLAYER_DIED, {});
     }
   }
 
@@ -374,13 +385,13 @@ export class NetworkManager {
     z: number
   ): void {
     if (this.room) {
-      this.room.send('respawn', { characterType, x, y, z });
+      this.room.send(MSG_RESPAWN, { characterType, x, y, z });
     }
   }
 
   public sendSelectCharacter(characterType: CharacterType): void {
     if (this.room) {
-      this.room.send('selectCharacter', { characterType });
+      this.room.send(MSG_SELECT_CHARACTER, { characterType });
     }
   }
 
@@ -393,7 +404,7 @@ export class NetworkManager {
 
     if (this.room) {
       for (const shot of pendingShots) {
-        this.room.send('shoot', shot);
+        this.room.send(MSG_SHOOT, shot);
       }
 
       const pos = this.localPlayer.mesh.position;
@@ -401,7 +412,7 @@ export class NetworkManager {
       const anim = this.localPlayer.currentAnim;
 
       if (this.localPlayer.consumeJumpEvent()) {
-        this.room.send('jump', { y: pos.y, anim });
+        this.room.send(MSG_JUMP, { y: pos.y, anim });
       }
 
       const dx = pos.x - this.lastSentX;
@@ -411,7 +422,7 @@ export class NetworkManager {
       const distSq = dx * dx + dy * dy + dz * dz;
 
       if (distSq > 0.0004 || dRot > 0.01 || anim !== this.lastSentAnim) {
-        this.room.send('move', {
+        this.room.send(MSG_MOVE, {
           x: pos.x,
           y: pos.y,
           z: pos.z,
