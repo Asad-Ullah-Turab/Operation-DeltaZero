@@ -10,7 +10,6 @@ import {
   createPlayerCylinderBody,
   isPlayerGrounded,
 } from './physics';
-import { PLAYER_HALF_HEIGHT } from './config/arena';
 import { CombatEffectsManager } from './combat';
 import { clamp, type CharacterType } from '../shared';
 import {
@@ -24,6 +23,10 @@ import { HealthController } from './player/systems/HealthController';
 import { InputController } from './player/systems/InputController';
 import { ViewmodelMotion } from './player/systems/ViewmodelMotion';
 import { WeaponController } from './player/systems/WeaponController';
+import {
+  ParkourController,
+  type LedgeInfo,
+} from './player/systems/ParkourController';
 import {
   WALK_SPEED,
   RUN_SPEED,
@@ -181,13 +184,16 @@ export class LocalPlayer {
   private readonly world: RAPIER.World;
   private readonly combatEffects: CombatEffectsManager;
 
-  // Spie third-person crouch & climbing state
+  // Spie third-person crouch state
   private isCrouchToggled = false;
-  private isClimbing = false;
-  private climbElapsed = 0;
-  private climbDuration = 1.15;
-  private readonly climbStartPos = new Vector3();
-  private readonly climbTargetPos = new Vector3();
+  private readonly parkourController = new ParkourController();
+
+  public get isClimbing(): boolean {
+    return this.parkourController.isClimbing;
+  }
+  public set isClimbing(v: boolean) {
+    this.parkourController.isClimbing = v;
+  }
 
   private readonly weaponController = new WeaponController();
   private readonly viewmodelMotion = new ViewmodelMotion();
@@ -357,7 +363,7 @@ export class LocalPlayer {
   private handleDeathInternal(): void {
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.isCrouchToggled = false;
-    this.isClimbing = false;
+    this.parkourController.reset();
     this.inputController.resetKeys();
   }
 
@@ -371,7 +377,7 @@ export class LocalPlayer {
   ): void {
     this.healthController.reset();
     this.isCrouchToggled = false;
-    this.isClimbing = false;
+    this.parkourController.reset();
     this.inputController.resetKeys();
     this.inputController.resetAimAndFiring();
 
@@ -662,160 +668,24 @@ export class LocalPlayer {
     }
   }
 
-  private checkClimbableLedge(): {
-    ledgeTopY: number;
-    edgeX: number;
-    edgeZ: number;
-    facingDir: Vector3;
-  } | null {
-    const pos = this.body.translation();
-    const feetY = pos.y - PLAYER_HALF_HEIGHT;
-
-    // Facing direction vector of character
-    const facingDir = new Vector3(
-      Math.sin(this.rotationY),
-      0,
-      Math.cos(this.rotationY)
+  private checkClimbableLedge(): LedgeInfo | null {
+    return this.parkourController.checkClimbableLedge(
+      this.world,
+      this.body,
+      this.rotationY
     );
-    facingDir.normalize();
-
-    // 1. Cast forward horizontal rays at multiple heights to find obstacle front wall
-    const testHeights = [0.5, 1.0, 1.5, 2.0, 2.5];
-    let closestHitDist = Number.POSITIVE_INFINITY;
-    const maxForwardReach = 1.35; // Player radius 0.55m + ~0.8m arm reach
-
-    for (const h of testHeights) {
-      const rayOrigin = {
-        x: pos.x,
-        y: feetY + h,
-        z: pos.z,
-      };
-      const rayDir = {
-        x: facingDir.x,
-        y: 0,
-        z: facingDir.z,
-      };
-      const ray = new RAPIER.Ray(rayOrigin, rayDir);
-      const hit = this.world.castRay(
-        ray,
-        maxForwardReach,
-        true,
-        undefined,
-        undefined,
-        undefined,
-        this.body
-      );
-      if (hit !== null && hit.timeOfImpact < closestHitDist) {
-        closestHitDist = hit.timeOfImpact;
-      }
-    }
-
-    if (!Number.isFinite(closestHitDist) || closestHitDist > maxForwardReach) {
-      return null;
-    }
-
-    // Ledge edge coordinates in front of player
-    const edgeX = pos.x + facingDir.x * closestHitDist;
-    const edgeZ = pos.z + facingDir.z * closestHitDist;
-
-    // 2. Cast downward ray from above the max obstacle height (probe slightly past front edge)
-    const probeDist = closestHitDist + 0.25;
-    const probeX = pos.x + facingDir.x * probeDist;
-    const probeZ = pos.z + facingDir.z * probeDist;
-
-    const maxCheckY = feetY + 3.1;
-    const downRay = new RAPIER.Ray(
-      { x: probeX, y: maxCheckY, z: probeZ },
-      { x: 0, y: -1, z: 0 }
-    );
-    const downHit = this.world.castRay(
-      downRay,
-      2.7,
-      true,
-      undefined,
-      undefined,
-      undefined,
-      this.body
-    );
-
-    if (downHit === null) {
-      return null;
-    }
-
-    const ledgeTopY = maxCheckY - downHit.timeOfImpact;
-    const climbHeight = ledgeTopY - feetY;
-
-    // Hang-to-crouch triggers exclusively for obstacles from waist height (~1.0m)
-    // up to 1.7x body size (~2.95m). For objects lower than waist height (e.g. curbs,
-    // low boxes < 1.0m), standard jump animation and impulse play instead.
-    const WAIST_HEIGHT = 1.0;
-    const MAX_CLIMB_HEIGHT = 2.95;
-    if (climbHeight < WAIST_HEIGHT || climbHeight > MAX_CLIMB_HEIGHT) {
-      return null;
-    }
-
-    // 3. Headroom clearance check: ensure no ceiling directly above the landing spot
-    const upRay = new RAPIER.Ray(
-      { x: probeX, y: ledgeTopY + 0.1, z: probeZ },
-      { x: 0, y: 1, z: 0 }
-    );
-    const upHit = this.world.castRay(
-      upRay,
-      1.6,
-      true,
-      undefined,
-      undefined,
-      undefined,
-      this.body
-    );
-    if (upHit !== null) {
-      return null;
-    }
-
-    return {
-      ledgeTopY,
-      edgeX,
-      edgeZ,
-      facingDir,
-    };
   }
 
-  private startLedgeClimb(ledge: {
-    ledgeTopY: number;
-    edgeX: number;
-    edgeZ: number;
-    facingDir: Vector3;
-  }): void {
-    this.isClimbing = true;
-    this.climbElapsed = 0;
-    this.climbDuration = 1.15;
-
-    // Compute hang start position:
-    // With offset 0.525m below ledgeTopY and 0.51m back from edge, the palms and fingers
-    // rest flush on top of the obstacle surface rather than floating slightly above it.
-    const hangStartX = ledge.edgeX - ledge.facingDir.x * 0.51;
-    const hangStartY = ledge.ledgeTopY - 0.525;
-    const hangStartZ = ledge.edgeZ - ledge.facingDir.z * 0.51;
-    this.climbStartPos.set(hangStartX, hangStartY, hangStartZ);
-
-    // Compute final landing position on top of the ledge
-    const targetX = ledge.edgeX + ledge.facingDir.x * 0.45;
-    const targetY = ledge.ledgeTopY + PLAYER_HALF_HEIGHT;
-    const targetZ = ledge.edgeZ + ledge.facingDir.z * 0.45;
-    this.climbTargetPos.set(targetX, targetY, targetZ);
-
-    // Orient character directly towards the wall
-    this.rotationY = Math.atan2(ledge.facingDir.x, ledge.facingDir.z);
-    this.targetRotationY = this.rotationY;
-
-    // Place body at hang start
-    this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-    this.body.setTranslation(
-      { x: hangStartX, y: hangStartY, z: hangStartZ },
-      true
-    );
-
-    this.visual.playAnimation('hang-to-crouch');
+  private startLedgeClimb(ledge: LedgeInfo): void {
+    this.parkourController.startLedgeClimb({
+      ledge,
+      body: this.body,
+      visual: this.visual,
+      onOrientToWall: (wallRotY) => {
+        this.rotationY = wallRotY;
+        this.targetRotationY = wallRotY;
+      },
+    });
   }
 
   private updateSpieThirdPerson(
@@ -834,65 +704,22 @@ export class LocalPlayer {
     this.rightScratch.normalize();
 
     // 1. Dynamic Ledge Climb Update
-    if (this.isClimbing) {
-      this.climbElapsed += dtSeconds;
-      const p = Math.min(1.0, this.climbElapsed / this.climbDuration);
-
-      let curX = this.climbStartPos.x;
-      let curY = this.climbStartPos.y;
-      let curZ = this.climbStartPos.z;
-
-      // During first 50% of climb (frames 0-35), root stays at hangStart while hands stay planted and body pulls up.
-      // During second 50% (frames 35-68), root smoothly glides to platform top target.
-      if (p > 0.5) {
-        const t = (p - 0.5) / 0.5;
-        const s = t * t * (3 - 2 * t);
-        curX =
-          this.climbStartPos.x +
-          (this.climbTargetPos.x - this.climbStartPos.x) * s;
-        curY =
-          this.climbStartPos.y +
-          (this.climbTargetPos.y - this.climbStartPos.y) * s;
-        curZ =
-          this.climbStartPos.z +
-          (this.climbTargetPos.z - this.climbStartPos.z) * s;
-      }
-
-      this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-      this.body.setTranslation({ x: curX, y: curY, z: curZ }, true);
-
-      this.mesh.position.set(curX, curY, curZ);
-      this.mesh.rotation.y = this.rotationY;
-
-      this.visual.updateAnimation?.(dtSeconds, {
-        isMoving: false,
-        isStrafing: false,
+    if (this.parkourController.isClimbing) {
+      this.parkourController.updateClimbing({
+        dtSeconds,
+        body: this.body,
+        mesh: this.mesh,
+        rotationY: this.rotationY,
+        visual: this.visual,
         moveDir: this.moveDirScratch,
         camForward: this.forwardScratch,
         camRight: this.rightScratch,
         camAlpha: alpha,
-        rotationY: this.rotationY,
-        isCrouched: true,
-        isClimbing: true,
-        isGrounded: false,
+        onClimbFinished: () => {
+          this.isCrouchToggled = true;
+        },
       });
-
       this.currentAnim = this.visual.getCurrentAnimation();
-
-      if (p >= 1.0) {
-        this.isClimbing = false;
-        this.isCrouchToggled = true;
-        this.body.setTranslation(
-          {
-            x: this.climbTargetPos.x,
-            y: this.climbTargetPos.y,
-            z: this.climbTargetPos.z,
-          },
-          true
-        );
-        this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-        this.visual.playAnimation('crouch-idle');
-      }
       return;
     }
 
