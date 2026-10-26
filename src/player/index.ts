@@ -16,7 +16,6 @@ export { SPIE_TRACK_CONFIGS } from './types';
 
 export {
   loadCharacterAssets,
-  loadPlayerAssetContainer,
 } from './assets';
 
 export { createSpieVisual } from './visuals/spie';

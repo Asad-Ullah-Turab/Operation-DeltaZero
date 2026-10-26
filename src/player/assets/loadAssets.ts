@@ -4,7 +4,6 @@
 
 import { Scene } from '@babylonjs/core/scene';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
-import type { AssetContainer } from '@babylonjs/core/assetContainer';
 import { ASSET_BASE_PATH, CHARACTER_ASSET_FILES } from '../../config/assets';
 import type { CharacterAssets } from '../types';
 import { normalizeMercContainerGeometry } from './normalizeMerc';
@@ -37,18 +36,4 @@ export async function loadCharacterAssets(
   normalizeMercContainerGeometry(mercContainer);
 
   return { spieContainer, mercContainer, mercenaryContainer };
-}
-
-/**
- * Legacy helper alias for loading `spy.glb`.
- * @deprecated Kept until Phase 8 cleanup.
- */
-export async function loadPlayerAssetContainer(
-  scene: Scene
-): Promise<AssetContainer> {
-  return SceneLoader.LoadAssetContainerAsync(
-    ASSET_BASE_PATH,
-    CHARACTER_ASSET_FILES.SPY,
-    scene
-  );
 }
