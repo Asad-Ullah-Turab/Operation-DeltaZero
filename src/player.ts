@@ -101,6 +101,7 @@ export interface CharacterVisual {
   triggerReload?: () => boolean;
   triggerHide?: () => void;
   getCurrentAnimation: () => string;
+  getHitZone?: (hitPoint: Vector3) => 'head' | 'torso' | 'limbs';
   dispose: () => void;
 }
 
@@ -858,6 +859,74 @@ export function createSpieVisual(
     setTarget(resolved, isSingle);
   };
 
+  const allChildNodes: TransformNode[] = [];
+  for (const rn of instantiated.rootNodes) {
+    if (rn instanceof TransformNode) {
+      allChildNodes.push(rn);
+      allChildNodes.push(...rn.getChildTransformNodes());
+    }
+  }
+
+  const headNodes = allChildNodes.filter((n) => {
+    const l = n.name.toLowerCase();
+    return l.includes('head') || l.includes('neck');
+  });
+
+  const torsoNodes = allChildNodes.filter((n) => {
+    const l = n.name.toLowerCase();
+    return (
+      l.includes('spine') ||
+      l.includes('hips') ||
+      l.includes('vest') ||
+      l.includes('chest')
+    );
+  });
+
+  const limbNodes = allChildNodes.filter((n) => {
+    const l = n.name.toLowerCase();
+    return (
+      l.includes('arm') ||
+      l.includes('forearm') ||
+      l.includes('hand') ||
+      l.includes('shoulder') ||
+      l.includes('leg') ||
+      l.includes('upleg') ||
+      l.includes('foot') ||
+      l.includes('toe')
+    );
+  });
+
+  const getHitZone = (hitPoint: Vector3): 'head' | 'torso' | 'limbs' => {
+    const distToNodes = (nodes: TransformNode[]): number => {
+      let minD = Infinity;
+      for (const n of nodes) {
+        n.computeWorldMatrix(true);
+        const d = Vector3.Distance(hitPoint, n.getAbsolutePosition());
+        if (d < minD) minD = d;
+      }
+      return minD;
+    };
+
+    const dh = distToNodes(headNodes);
+    const dt = distToNodes(torsoNodes);
+    const dl = distToNodes(limbNodes);
+
+    if (dh < dt && dh < dl && dh < 0.55) return 'head';
+    if (dt <= dl && dt < 0.65) return 'torso';
+    if (dl < Infinity) return 'limbs';
+
+    // Geometric fallback based on local character vertical and lateral profile
+    const feetY = root.position.y - PLAYER_HALF_HEIGHT;
+    const relY = hitPoint.y - feetY;
+    if (relY >= 1.42) return 'head';
+    if (relY >= 0.82) {
+      const dx = hitPoint.x - root.position.x;
+      const dz = hitPoint.z - root.position.z;
+      if (Math.hypot(dx, dz) <= 0.22) return 'torso';
+    }
+    return 'limbs';
+  };
+
   const dispose = (): void => {
     if (renderObserver) {
       scene.onBeforeRenderObservable.remove(renderObserver);
@@ -879,6 +948,7 @@ export function createSpieVisual(
     playAnimation,
     updateAnimation,
     getCurrentAnimation: () => currentState,
+    getHitZone,
     dispose,
   };
 }
@@ -1136,6 +1206,74 @@ export function createMercVisual(
 
   startDrawOnce();
 
+  const allChildNodes: TransformNode[] = [];
+  for (const rn of instantiated.rootNodes) {
+    if (rn instanceof TransformNode) {
+      allChildNodes.push(rn);
+      allChildNodes.push(...rn.getChildTransformNodes());
+    }
+  }
+
+  const headNodes = allChildNodes.filter((n) => {
+    const l = n.name.toLowerCase();
+    return l.includes('head') || l.includes('neck');
+  });
+
+  const torsoNodes = allChildNodes.filter((n) => {
+    const l = n.name.toLowerCase();
+    return (
+      l.includes('spine') ||
+      l.includes('hips') ||
+      l.includes('vest') ||
+      l.includes('chest')
+    );
+  });
+
+  const limbNodes = allChildNodes.filter((n) => {
+    const l = n.name.toLowerCase();
+    return (
+      l.includes('arm') ||
+      l.includes('forearm') ||
+      l.includes('hand') ||
+      l.includes('shoulder') ||
+      l.includes('leg') ||
+      l.includes('upleg') ||
+      l.includes('foot') ||
+      l.includes('toe')
+    );
+  });
+
+  const getHitZone = (hitPoint: Vector3): 'head' | 'torso' | 'limbs' => {
+    const distToNodes = (nodes: TransformNode[]): number => {
+      let minD = Infinity;
+      for (const n of nodes) {
+        n.computeWorldMatrix(true);
+        const d = Vector3.Distance(hitPoint, n.getAbsolutePosition());
+        if (d < minD) minD = d;
+      }
+      return minD;
+    };
+
+    const dh = distToNodes(headNodes);
+    const dt = distToNodes(torsoNodes);
+    const dl = distToNodes(limbNodes);
+
+    if (dh < dt && dh < dl && dh < 0.55) return 'head';
+    if (dt <= dl && dt < 0.65) return 'torso';
+    if (dl < Infinity) return 'limbs';
+
+    // Geometric fallback based on local character vertical and lateral profile
+    const feetY = root.position.y - PLAYER_HALF_HEIGHT;
+    const relY = hitPoint.y - feetY;
+    if (relY >= 1.42) return 'head';
+    if (relY >= 0.82) {
+      const dx = hitPoint.x - root.position.x;
+      const dz = hitPoint.z - root.position.z;
+      if (Math.hypot(dx, dz) <= 0.22) return 'torso';
+    }
+    return 'limbs';
+  };
+
   const dispose = (): void => {
     stateToken++;
     for (const ag of instantiated.animationGroups) {
@@ -1159,6 +1297,7 @@ export function createMercVisual(
     triggerReload,
     triggerHide,
     getCurrentAnimation: () => currentAnim,
+    getHitZone,
     dispose,
   };
 }
@@ -1218,6 +1357,74 @@ export function createMercWorldVisual(
     currentAnim = animName;
   };
 
+  const allChildNodes: TransformNode[] = [];
+  for (const rn of instantiated.rootNodes) {
+    if (rn instanceof TransformNode) {
+      allChildNodes.push(rn);
+      allChildNodes.push(...rn.getChildTransformNodes());
+    }
+  }
+
+  const headNodes = allChildNodes.filter((n) => {
+    const l = n.name.toLowerCase();
+    return l.includes('head') || l.includes('neck');
+  });
+
+  const torsoNodes = allChildNodes.filter((n) => {
+    const l = n.name.toLowerCase();
+    return (
+      l.includes('spine') ||
+      l.includes('hips') ||
+      l.includes('vest') ||
+      l.includes('chest')
+    );
+  });
+
+  const limbNodes = allChildNodes.filter((n) => {
+    const l = n.name.toLowerCase();
+    return (
+      l.includes('arm') ||
+      l.includes('forearm') ||
+      l.includes('hand') ||
+      l.includes('shoulder') ||
+      l.includes('leg') ||
+      l.includes('upleg') ||
+      l.includes('foot') ||
+      l.includes('toe')
+    );
+  });
+
+  const getHitZone = (hitPoint: Vector3): 'head' | 'torso' | 'limbs' => {
+    const distToNodes = (nodes: TransformNode[]): number => {
+      let minD = Infinity;
+      for (const n of nodes) {
+        n.computeWorldMatrix(true);
+        const d = Vector3.Distance(hitPoint, n.getAbsolutePosition());
+        if (d < minD) minD = d;
+      }
+      return minD;
+    };
+
+    const dh = distToNodes(headNodes);
+    const dt = distToNodes(torsoNodes);
+    const dl = distToNodes(limbNodes);
+
+    if (dh < dt && dh < dl && dh < 0.55) return 'head';
+    if (dt <= dl && dt < 0.65) return 'torso';
+    if (dl < Infinity) return 'limbs';
+
+    // Geometric fallback based on local character vertical and lateral profile
+    const feetY = root.position.y - PLAYER_HALF_HEIGHT;
+    const relY = hitPoint.y - feetY;
+    if (relY >= 1.42) return 'head';
+    if (relY >= 0.82) {
+      const dx = hitPoint.x - root.position.x;
+      const dz = hitPoint.z - root.position.z;
+      if (Math.hypot(dx, dz) <= 0.22) return 'torso';
+    }
+    return 'limbs';
+  };
+
   const dispose = (): void => {
     for (const ag of instantiated.animationGroups) {
       ag.dispose();
@@ -1235,6 +1442,7 @@ export function createMercWorldVisual(
     muzzleFlashMesh,
     playAnimation,
     getCurrentAnimation: () => currentAnim,
+    getHitZone,
     dispose,
   };
 }
@@ -1258,13 +1466,20 @@ export function lerpAngleY(
  * surface impacts, and barrel smoke).
  */
 export class LocalPlayer {
-  public readonly characterType: CharacterType;
-  public readonly visual: CharacterVisual;
-  public readonly mesh: Mesh;
+  public characterType: CharacterType;
+  public visual: CharacterVisual;
+  public mesh: Mesh;
   public readonly body: RAPIER.RigidBody;
   public readonly fpCamera: FreeCamera | null = null;
   public rotationY = 0;
   public currentAnim = 'Idle';
+
+  public currentHp = 100;
+  public readonly maxHp = 100;
+  public isDead = false;
+  public onDeath?: () => void;
+
+  private readonly scene: Scene;
 
   private pitchX = 0;
   private targetRotationY = 0;
@@ -1340,6 +1555,10 @@ export class LocalPlayer {
   private readonly ammoRoundsEl: HTMLElement | null;
   private readonly ammoMagsBarsEl: HTMLElement | null;
   private readonly ammoMagsCountEl: HTMLElement | null;
+  private readonly healthHudEl: HTMLElement | null;
+  private readonly healthValueEl: HTMLElement | null;
+  private readonly healthFillEl: HTMLElement | null;
+  private readonly damageFlashEl: HTMLElement | null;
 
   // Pre-allocated scratch vectors to avoid GC pauses in the render loop
   private readonly forwardScratch = new Vector3();
@@ -1353,16 +1572,26 @@ export class LocalPlayer {
     characterType: CharacterType,
     combatEffects: CombatEffectsManager
   ) {
+    this.scene = scene;
     this.world = world;
     this.characterType = characterType;
     this.combatEffects = combatEffects;
     this.body = createPlayerCylinderBody(world, 0, 2.0, 0);
+
+    (this.body as unknown as { userData?: unknown }).userData = {
+      isLocal: true,
+      player: this,
+    };
 
     this.crosshairEl = document.getElementById('crosshair');
     this.ammoHudEl = document.getElementById('ammo-hud');
     this.ammoRoundsEl = document.getElementById('ammo-rounds');
     this.ammoMagsBarsEl = document.getElementById('ammo-mags-bars');
     this.ammoMagsCountEl = document.getElementById('ammo-mags-count');
+    this.healthHudEl = document.getElementById('health-hud');
+    this.healthValueEl = document.getElementById('health-value');
+    this.healthFillEl = document.getElementById('health-bar-fill');
+    this.damageFlashEl = document.getElementById('damage-flash');
 
     // Initialize 4 reserve magazines of 30 rounds each (5 magazines total with loaded mag)
     for (let i = 0; i < INITIAL_RESERVE_MAGAZINES; i++) {
@@ -1403,6 +1632,7 @@ export class LocalPlayer {
 
       // Reveal tactical ammunition HUD in bottom-right corner
       this.ammoHudEl?.classList.remove('hidden');
+      this.healthHudEl?.classList.add('hidden');
       this.updateAmmoHud();
     } else {
       this.visual = createSpieVisual(
@@ -1412,6 +1642,11 @@ export class LocalPlayer {
       );
       this.mesh = this.visual.root;
       this.currentAnim = 'Idle';
+
+      // Reveal tactical health HUD in bottom-right corner
+      this.healthHudEl?.classList.remove('hidden');
+      this.ammoHudEl?.classList.add('hidden');
+      this.updateHealthHud();
     }
 
     this.initInput();
@@ -1440,6 +1675,146 @@ export class LocalPlayer {
       this.ammoMagsCountEl.textContent = `${reserveCount} ${
         reserveCount === 1 ? 'MAG' : 'MAGS'
       }`;
+    }
+  }
+
+  /**
+   * Applies bullet damage to the Spy based on hit zone:
+   * - Torso: 25 HP
+   * - Head / Neck: 50 HP
+   * - Limbs (Arms / Legs): 10 HP
+   */
+  public takeDamage(amount: number, zone = 'torso'): void {
+    if (this.isDead) return;
+
+    this.currentHp = Math.max(0, this.currentHp - amount);
+    this.updateHealthHud();
+    this.triggerDamageFlash();
+
+    console.log(
+      `[Health] Took ${amount} damage (${zone}). Remaining HP: ${this.currentHp}/100`
+    );
+
+    if (this.currentHp <= 0) {
+      this.handleDeath();
+    }
+  }
+
+  public classifyHitZone(hitPoint: Vector3): 'head' | 'torso' | 'limbs' {
+    if (this.visual.getHitZone) {
+      return this.visual.getHitZone(hitPoint);
+    }
+    const feetY = this.mesh.position.y - PLAYER_HALF_HEIGHT;
+    const relY = hitPoint.y - feetY;
+    if (relY >= 1.42) return 'head';
+    if (relY >= 0.82) {
+      const dx = hitPoint.x - this.mesh.position.x;
+      const dz = hitPoint.z - this.mesh.position.z;
+      if (Math.hypot(dx, dz) <= 0.22) return 'torso';
+    }
+    return 'limbs';
+  }
+
+  public updateHealthHud(): void {
+    if (this.healthValueEl) {
+      this.healthValueEl.textContent = String(this.currentHp);
+      this.healthValueEl.className = 'health-value';
+      if (this.currentHp <= 25) {
+        this.healthValueEl.classList.add('low');
+      } else if (this.currentHp <= 50) {
+        this.healthValueEl.classList.add('mid');
+      }
+    }
+
+    if (this.healthFillEl) {
+      const pct = Math.max(0, Math.min(100, (this.currentHp / 100) * 100));
+      this.healthFillEl.style.width = `${pct}%`;
+      this.healthFillEl.className = 'health-bar-fill';
+      if (this.currentHp <= 25) {
+        this.healthFillEl.classList.add('low');
+      } else if (this.currentHp <= 50) {
+        this.healthFillEl.classList.add('mid');
+      }
+    }
+
+    if (this.healthHudEl) {
+      if (this.currentHp <= 25) {
+        this.healthHudEl.style.borderRightColor = '#ef4444';
+      } else if (this.currentHp <= 50) {
+        this.healthHudEl.style.borderRightColor = '#f59e0b';
+      } else {
+        this.healthHudEl.style.borderRightColor = '#10b981';
+      }
+    }
+  }
+
+  private triggerDamageFlash(): void {
+    if (!this.damageFlashEl) return;
+    this.damageFlashEl.classList.add('active');
+    setTimeout(() => {
+      this.damageFlashEl?.classList.remove('active');
+    }, 120);
+  }
+
+  private handleDeath(): void {
+    if (this.isDead) return;
+    this.isDead = true;
+
+    this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    this.isCrouchToggled = false;
+    this.isClimbing = false;
+    for (const k of Object.keys(this.keys)) {
+      this.keys[k] = false;
+    }
+
+    if (document.pointerLockElement) {
+      document.exitPointerLock?.();
+    }
+
+    this.onDeath?.();
+  }
+
+  public respawn(
+    selectedType: CharacterType,
+    arcCamera?: ArcRotateCamera | null
+  ): void {
+    this.currentHp = 100;
+    this.isDead = false;
+    this.isCrouchToggled = false;
+    this.isClimbing = false;
+    for (const k of Object.keys(this.keys)) {
+      this.keys[k] = false;
+    }
+
+    const spawnSpread = 8;
+    const sx = (Math.random() - 0.5) * spawnSpread;
+    const sz = (Math.random() - 0.5) * spawnSpread;
+    this.setSpawnPosition(sx, 2.0, sz, 0);
+
+    if (selectedType === 'Spie') {
+      this.characterType = 'Spie';
+      this.healthHudEl?.classList.remove('hidden');
+      this.ammoHudEl?.classList.add('hidden');
+      this.crosshairEl?.classList.add('hidden');
+      this.updateHealthHud();
+      this.visual.playAnimation('idle');
+      if (arcCamera) {
+        this.scene.activeCamera = arcCamera;
+      }
+    } else {
+      this.characterType = 'Merc';
+      this.healthHudEl?.classList.add('hidden');
+      this.ammoHudEl?.classList.remove('hidden');
+      this.crosshairEl?.classList.remove('hidden');
+      this.currentMagazineRounds = MAGAZINE_CAPACITY;
+      this.reserveMagazines.length = 0;
+      for (let i = 0; i < INITIAL_RESERVE_MAGAZINES; i++) {
+        this.reserveMagazines.push(MAGAZINE_CAPACITY);
+      }
+      this.updateAmmoHud();
+      if (this.fpCamera) {
+        this.scene.activeCamera = this.fpCamera;
+      }
     }
   }
 
@@ -1482,6 +1857,14 @@ export class LocalPlayer {
 
   private initInput(): void {
     window.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (this.isDead) return;
+
+      if (e.code === 'KeyK' && this.characterType === 'Spie') {
+        // Debug test shot on Spy (torso -25 HP)
+        this.takeDamage(25, 'torso');
+        return;
+      }
+
       this.keys[e.code] = true;
 
       if (e.code === 'Space' && !e.repeat) {
@@ -1522,8 +1905,8 @@ export class LocalPlayer {
     // immediately whenever the mouse was moved.
     const onPointerDown = (e: PointerEvent): void => {
       if (e.pointerType !== 'mouse') return;
-      // Ignore clicks before pointer lock is active (e.g. clicking selection menu)
-      if (document.pointerLockElement === null) return;
+      // Ignore clicks before pointer lock is active or when eliminated
+      if (document.pointerLockElement === null || this.isDead) return;
 
       if (e.button === 2) {
         this.isRightClickHeld = true;
@@ -1600,6 +1983,7 @@ export class LocalPlayer {
     movementY: number,
     arcCamera: ArcRotateCamera | null
   ): void {
+    if (this.isDead) return;
     if (this.characterType === 'Merc') {
       const sens =
         MOUSE_SENSITIVITY +
@@ -1775,6 +2159,7 @@ export class LocalPlayer {
   }
 
   public update(arcCamera: ArcRotateCamera | null, dtSeconds = 1 / 60): void {
+    if (this.isDead) return;
     if (this.characterType === 'Merc') {
       this.updateMercFirstPerson(dtSeconds);
     } else {

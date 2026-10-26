@@ -1,4 +1,5 @@
 import * as Colyseus from 'colyseus.js';
+import RAPIER from '@dimforge/rapier3d-compat';
 import { Scene } from '@babylonjs/core/scene';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import {
@@ -11,6 +12,7 @@ import {
   lerpAngleY,
 } from './player';
 import { CombatEffectsManager } from './combat';
+import { PLAYER_HALF_HEIGHT, PLAYER_RADIUS } from './physics';
 
 interface SyncedPlayerState {
   x: number;
@@ -49,6 +51,7 @@ interface RemotePlayer {
   targetPos: Vector3;
   targetRotY: number;
   targetAnim: string;
+  body?: RAPIER.RigidBody;
 }
 
 function normalizeCharacterType(value: unknown): CharacterType {
@@ -60,6 +63,7 @@ export class NetworkManager {
   private readonly localPlayer: LocalPlayer;
   private readonly assets: CharacterAssets;
   private readonly combatEffects: CombatEffectsManager;
+  private readonly world?: RAPIER.World;
   private readonly client: Colyseus.Client;
   private room: Colyseus.Room<SyncedRoomState> | null = null;
   private readonly remotePlayers = new Map<string, RemotePlayer>();
@@ -74,12 +78,14 @@ export class NetworkManager {
     scene: Scene,
     localPlayer: LocalPlayer,
     assets: CharacterAssets,
-    combatEffects: CombatEffectsManager
+    combatEffects: CombatEffectsManager,
+    world?: RAPIER.World
   ) {
     this.scene = scene;
     this.localPlayer = localPlayer;
     this.assets = assets;
     this.combatEffects = combatEffects;
+    this.world = world;
 
     const hostname = window.location.hostname || 'localhost';
     this.client = new Colyseus.Client('ws://' + hostname + ':2567');
@@ -148,9 +154,56 @@ export class NetworkManager {
 
       const shotDir = new Vector3(payload.dirX, payload.dirY, payload.dirZ);
       if (shotDir.lengthSquared() > 0.0001) {
-        this.combatEffects.spawnBullet(shotOrigin, shotDir);
+        // Visual bullet passes through local player so shooter-side damage is authoritative
+        this.combatEffects.spawnBullet(shotOrigin, shotDir, this.localPlayer.body);
       }
     });
+
+    // Listen for authoritative damage events
+    room.onMessage(
+      'takeDamage',
+      (payload: { attackerSessionId?: string; damage: number; zone?: string }) => {
+        if (!payload || typeof payload.damage !== 'number') return;
+        if (this.localPlayer && !this.localPlayer.isDead) {
+          this.localPlayer.takeDamage(payload.damage, payload.zone ?? 'torso');
+        }
+      }
+    );
+
+    // Listen for remote player elimination
+    room.onMessage('playerDied', (payload: { sessionId: string }) => {
+      if (!payload || !payload.sessionId) return;
+      const remote = this.remotePlayers.get(payload.sessionId);
+      if (remote) {
+        remote.visual.root.setEnabled(false);
+      }
+    });
+
+    // Listen for remote player respawn
+    room.onMessage(
+      'playerRespawned',
+      (payload: {
+        sessionId: string;
+        characterType?: CharacterType;
+        x: number;
+        y: number;
+        z: number;
+      }) => {
+        if (!payload || !payload.sessionId) return;
+        const remote = this.remotePlayers.get(payload.sessionId);
+        if (remote) {
+          remote.visual.root.setEnabled(true);
+          remote.visual.root.position.set(payload.x, payload.y, payload.z);
+          remote.targetPos.set(payload.x, payload.y, payload.z);
+          if (remote.body) {
+            remote.body.setTranslation(
+              { x: payload.x, y: payload.y, z: payload.z },
+              true
+            );
+          }
+        }
+      }
+    );
 
     const getCallbacks = (Colyseus as unknown as {
       getStateCallbacks?: (
@@ -193,13 +246,38 @@ export class NetworkManager {
       const defaultAnim = charType === 'Merc' ? 'Draw' : 'Idle';
       visual.playAnimation(player.anim ?? defaultAnim);
 
+      let remoteBody: RAPIER.RigidBody | undefined;
+      if (this.world) {
+        const bodyDesc = RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(
+          player.x,
+          player.y,
+          player.z
+        );
+        remoteBody = this.world.createRigidBody(bodyDesc);
+        const colDesc = RAPIER.ColliderDesc.cylinder(
+          PLAYER_HALF_HEIGHT,
+          PLAYER_RADIUS
+        );
+        this.world.createCollider(colDesc, remoteBody);
+      }
+
       const remoteEntry: RemotePlayer = {
         visual,
         characterType: charType,
         targetPos: new Vector3(player.x, player.y, player.z),
         targetRotY: player.rotationY,
         targetAnim: player.anim ?? defaultAnim,
+        body: remoteBody,
       };
+
+      if (remoteBody) {
+        (remoteBody as unknown as { userData?: unknown }).userData = {
+          isRemote: true,
+          sessionId,
+          remotePlayer: remoteEntry,
+          characterType: charType,
+        };
+      }
       this.remotePlayers.set(sessionId, remoteEntry);
 
       const onPlayerChange = (): void => {
@@ -214,6 +292,15 @@ export class NetworkManager {
           newVisual.root.rotation.y = prevRotY;
           remoteEntry.visual = newVisual;
           remoteEntry.characterType = updatedType;
+
+          if (remoteEntry.body) {
+            (remoteEntry.body as unknown as { userData?: unknown }).userData = {
+              isRemote: true,
+              sessionId,
+              remotePlayer: remoteEntry,
+              characterType: updatedType,
+            };
+          }
         }
 
         remoteEntry.targetPos.set(player.x, player.y, player.z);
@@ -242,6 +329,9 @@ export class NetworkManager {
     ): void => {
       const remote = this.remotePlayers.get(sessionId);
       if (!remote) return;
+      if (remote.body && this.world) {
+        this.world.removeRigidBody(remote.body);
+      }
       remote.visual.dispose();
       this.remotePlayers.delete(sessionId);
     };
@@ -258,6 +348,39 @@ export class NetworkManager {
     } else {
       (playersProxy as unknown as { onRemove: typeof handleRemove }).onRemove =
         handleRemove;
+    }
+  }
+
+  public sendPlayerHit(
+    targetSessionId: string,
+    damage: number,
+    zone: string
+  ): void {
+    if (this.room) {
+      this.room.send('playerHit', { targetSessionId, damage, zone });
+    }
+  }
+
+  public sendPlayerDied(): void {
+    if (this.room) {
+      this.room.send('playerDied', {});
+    }
+  }
+
+  public sendRespawn(
+    characterType: CharacterType,
+    x: number,
+    y: number,
+    z: number
+  ): void {
+    if (this.room) {
+      this.room.send('respawn', { characterType, x, y, z });
+    }
+  }
+
+  public sendSelectCharacter(characterType: CharacterType): void {
+    if (this.room) {
+      this.room.send('selectCharacter', { characterType });
     }
   }
 
@@ -315,6 +438,14 @@ export class NetworkManager {
         remote.targetRotY,
         lerpFactor
       );
+
+      if (remote.body) {
+        remote.body.setNextKinematicTranslation({
+          x: currentPos.x,
+          y: currentPos.y,
+          z: currentPos.z,
+        });
+      }
 
       if (remote.characterType === 'Merc') {
         remote.visual.playAnimation(remote.targetAnim || 'Idle');

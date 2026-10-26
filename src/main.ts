@@ -23,21 +23,39 @@ import {
 import { CombatEffectsManager } from './combat';
 import { NetworkManager } from './network';
 
+function showCharacterSelectMenu(onSelect: (type: CharacterType) => void): void {
+  const menuEl = document.getElementById('character-select-menu');
+  const spieBtn = document.getElementById('select-spie-btn');
+  const mercBtn = document.getElementById('select-merc-btn');
+
+  if (menuEl) {
+    menuEl.classList.remove('hidden');
+  }
+
+  const cleanup = (): void => {
+    spieBtn?.removeEventListener('click', handleSpie);
+    mercBtn?.removeEventListener('click', handleMerc);
+  };
+
+  const handleSpie = (): void => {
+    cleanup();
+    if (menuEl) menuEl.classList.add('hidden');
+    onSelect('Spie');
+  };
+
+  const handleMerc = (): void => {
+    cleanup();
+    if (menuEl) menuEl.classList.add('hidden');
+    onSelect('Merc');
+  };
+
+  spieBtn?.addEventListener('click', handleSpie);
+  mercBtn?.addEventListener('click', handleMerc);
+}
+
 function waitForCharacterSelection(): Promise<CharacterType> {
   return new Promise((resolve) => {
-    const menuEl = document.getElementById('character-select-menu');
-    const spieBtn = document.getElementById('select-spie-btn');
-    const mercBtn = document.getElementById('select-merc-btn');
-
-    const choose = (type: CharacterType): void => {
-      if (menuEl) {
-        menuEl.classList.add('hidden');
-      }
-      resolve(type);
-    };
-
-    spieBtn?.addEventListener('click', () => choose('Spie'), { once: true });
-    mercBtn?.addEventListener('click', () => choose('Merc'), { once: true });
+    showCharacterSelectMenu((type) => resolve(type));
   });
 }
 
@@ -124,13 +142,18 @@ async function bootstrap(): Promise<void> {
   // 7. Wait for player to click 'Spie' or 'Mercenary'
   const selectedCharacterType = await selectionPromise;
 
-  // Show centered crosshair and lock mouse pointer to the game window
-  crosshairElement?.classList.remove('hidden');
+  // Show crosshair if Mercenary, hide if Spie
+  if (selectedCharacterType === 'Merc') {
+    crosshairElement?.classList.remove('hidden');
+  } else {
+    crosshairElement?.classList.add('hidden');
+  }
+
   canvas.focus();
   void canvas.requestPointerLock?.();
 
   canvas.addEventListener('click', () => {
-    if (document.pointerLockElement !== canvas) {
+    if (!localPlayer.isDead && document.pointerLockElement !== canvas) {
       void canvas.requestPointerLock?.();
     }
   });
@@ -146,29 +169,29 @@ async function bootstrap(): Promise<void> {
   );
 
   // 9. Configure Active Camera based on Character Type
-  let arcCamera: ArcRotateCamera | null = null;
+  const arcCamera = new ArcRotateCamera(
+    'playerCamera',
+    -Math.PI / 2,
+    Math.PI / 3.2,
+    13,
+    new Vector3(0, 2, 0),
+    scene
+  );
+  arcCamera.lowerBetaLimit = 0.25;
+  arcCamera.upperBetaLimit = Math.PI / 2 - 0.08;
+  arcCamera.lowerRadiusLimit = 5;
+  arcCamera.upperRadiusLimit = 28;
+  arcCamera.panningSensibility = 0;
+  arcCamera.keysUp = [];
+  arcCamera.keysDown = [];
+  arcCamera.keysLeft = [];
+  arcCamera.keysRight = [];
+  arcCamera.attachControl(canvas, true);
+  arcCamera.inputs.removeByType('ArcRotateCameraPointersInput');
+
   if (selectedCharacterType === 'Merc' && localPlayer.fpCamera) {
     scene.activeCamera = localPlayer.fpCamera;
   } else {
-    arcCamera = new ArcRotateCamera(
-      'playerCamera',
-      -Math.PI / 2,
-      Math.PI / 3.2,
-      13,
-      new Vector3(0, 2, 0),
-      scene
-    );
-    arcCamera.lowerBetaLimit = 0.25;
-    arcCamera.upperBetaLimit = Math.PI / 2 - 0.08;
-    arcCamera.lowerRadiusLimit = 5;
-    arcCamera.upperRadiusLimit = 28;
-    arcCamera.panningSensibility = 0;
-    arcCamera.keysUp = [];
-    arcCamera.keysDown = [];
-    arcCamera.keysLeft = [];
-    arcCamera.keysRight = [];
-    arcCamera.attachControl(canvas, true);
-    arcCamera.inputs.removeByType('ArcRotateCameraPointersInput');
     scene.activeCamera = arcCamera;
   }
 
@@ -176,7 +199,7 @@ async function bootstrap(): Promise<void> {
   // pointerdown, which suppresses legacy mousemove events while any mouse
   // button is held — that froze mouse-look while firing / aiming.
   window.addEventListener('pointermove', (e: PointerEvent) => {
-    if (document.pointerLockElement === canvas) {
+    if (document.pointerLockElement === canvas && !localPlayer.isDead) {
       localPlayer.handleMouseMove(e.movementX, e.movementY, arcCamera);
     }
   });
@@ -186,9 +209,53 @@ async function bootstrap(): Promise<void> {
     scene,
     localPlayer,
     characterAssets,
-    combatEffects
+    combatEffects,
+    world
   );
   void network.connect();
+
+  // Wire combat bullet hit detection on operative characters
+  combatEffects.onHit = (event) => {
+    const hitBody = event.body;
+    if (!hitBody || !(hitBody as unknown as { userData?: unknown }).userData) return;
+    const data = (hitBody as unknown as { userData: {
+      isLocal?: boolean;
+      isRemote?: boolean;
+      sessionId?: string;
+      player?: LocalPlayer;
+      remotePlayer?: { characterType: CharacterType; visual: { getHitZone?: (p: Vector3) => 'head' | 'torso' | 'limbs' } };
+      characterType?: CharacterType;
+    } }).userData;
+
+    if (data.isLocal && data.player) {
+      if (data.player.characterType === 'Spie') {
+        const zone = data.player.classifyHitZone(event.hitPoint);
+        const damage = zone === 'head' ? 50 : zone === 'torso' ? 25 : 10;
+        data.player.takeDamage(damage, zone);
+      }
+    } else if (data.isRemote && data.sessionId && data.remotePlayer) {
+      if (data.remotePlayer.characterType === 'Spie') {
+        const zone = data.remotePlayer.visual.getHitZone
+          ? data.remotePlayer.visual.getHitZone(event.hitPoint)
+          : 'torso';
+        const damage = zone === 'head' ? 50 : zone === 'torso' ? 25 : 10;
+        network.sendPlayerHit(data.sessionId, damage, zone);
+      }
+    }
+  };
+
+  // When the Spy dies, prompt with the character selection menu and respawn
+  localPlayer.onDeath = () => {
+    network.sendPlayerDied();
+    showCharacterSelectMenu((selectedType) => {
+      localPlayer.respawn(selectedType, arcCamera);
+      network.sendSelectCharacter(selectedType);
+      const pos = localPlayer.mesh.position;
+      network.sendRespawn(selectedType, pos.x, pos.y, pos.z);
+      canvas.focus();
+      void canvas.requestPointerLock?.();
+    });
+  };
 
   // 11. Start Main Render & Physics Loop
   let lastFpsUpdate = performance.now();

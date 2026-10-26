@@ -137,6 +137,66 @@ export class GameRoom extends Room<GameState> {
         );
       }
     });
+
+    // Handle damage notification from shooter to victim
+    this.onMessage(
+      'playerHit',
+      (
+        client: Client,
+        data: { targetSessionId: string; damage: number; zone?: string }
+      ) => {
+        if (!data || typeof data.targetSessionId !== 'string') return;
+        for (const otherClient of this.clients) {
+          if (otherClient.sessionId === data.targetSessionId) {
+            otherClient.send('takeDamage', {
+              attackerSessionId: client.sessionId,
+              damage: Number.isFinite(data.damage) ? data.damage : 25,
+              zone: typeof data.zone === 'string' ? data.zone : 'torso',
+            });
+            break;
+          }
+        }
+      }
+    );
+
+    // Handle player elimination event
+    this.onMessage('playerDied', (client: Client) => {
+      this.broadcast('playerDied', { sessionId: client.sessionId }, { except: client });
+    });
+
+    // Handle player respawn event
+    this.onMessage(
+      'respawn',
+      (
+        client: Client,
+        data: { characterType?: CharacterType; x: number; y: number; z: number }
+      ) => {
+        const player = this.state.players.get(client.sessionId);
+        if (!player || typeof data !== 'object' || data === null) return;
+
+        if (data.characterType === 'Merc' || data.characterType === 'Spie') {
+          player.characterType = data.characterType;
+        }
+        if (
+          Number.isFinite(data.x) &&
+          Number.isFinite(data.y) &&
+          Number.isFinite(data.z)
+        ) {
+          player.x = clamp(data.x, -ARENA_BOUND, ARENA_BOUND);
+          player.y = clamp(data.y, MIN_Y, MAX_Y);
+          player.z = clamp(data.z, -ARENA_BOUND, ARENA_BOUND);
+        }
+        player.anim = player.characterType === 'Merc' ? 'Draw' : 'Idle';
+
+        this.broadcast('playerRespawned', {
+          sessionId: client.sessionId,
+          characterType: player.characterType,
+          x: player.x,
+          y: player.y,
+          z: player.z,
+        });
+      }
+    );
   }
 
   onJoin(client: Client, options?: JoinOptions): void {

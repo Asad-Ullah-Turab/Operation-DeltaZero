@@ -116,6 +116,13 @@ export function createMuzzleFlashMesh(
   return flashRoot;
 }
 
+export interface BulletHitEvent {
+  hitPoint: Vector3;
+  hitNormal: Vector3;
+  collider: RAPIER.Collider;
+  body: RAPIER.RigidBody | null;
+}
+
 /**
  * Manages fast-moving yellow bullet projectiles with continuous per-segment
  * Rapier raycast collision, single-frame muzzle flashes, surface impact bursts,
@@ -129,10 +136,13 @@ export class CombatEffectsManager {
   private readonly sparkMat: StandardMaterial;
   private readonly dustMat: StandardMaterial;
   private readonly smokeMat: StandardMaterial;
+  private readonly fleshMat: StandardMaterial;
 
   private readonly bullets: ActiveBullet[] = [];
   private readonly particles: ActiveParticle[] = [];
   private readonly activeFlashes: ActiveMuzzleFlash[] = [];
+
+  public onHit: ((event: BulletHitEvent) => void) | null = null;
 
   constructor(scene: Scene, world: RAPIER.World) {
     this.scene = scene;
@@ -163,6 +173,13 @@ export class CombatEffectsManager {
     this.smokeMat.diffuseColor = new Color3(0.76, 0.8, 0.85);
     this.smokeMat.specularColor = Color3.Black();
     this.smokeMat.disableLighting = true;
+
+    this.fleshMat = new StandardMaterial('impactFleshMat', scene);
+    this.fleshMat.emissiveColor = new Color3(0.75, 0.08, 0.08);
+    this.fleshMat.diffuseColor = new Color3(0.75, 0.08, 0.08);
+    this.fleshMat.specularColor = Color3.Black();
+    this.fleshMat.disableLighting = true;
+    this.fleshMat.freeze();
   }
 
   /**
@@ -302,6 +319,50 @@ export class CombatEffectsManager {
   }
 
   /**
+   * Spawns a small burst of dark-crimson flesh particles when a bullet impacts
+   * an operative character.
+   */
+  public spawnFleshImpact(point: Vector3, normal: Vector3): void {
+    const n = normal.normalizeToNew();
+    const particleCount = 6;
+    for (let i = 0; i < particleCount; i++) {
+      const drop = MeshBuilder.CreateBox(
+        'flesh_spark',
+        { size: 0.04 },
+        this.scene
+      );
+      drop.isPickable = false;
+      drop.material = this.fleshMat;
+      drop.position.copyFrom(point).addInPlaceFromFloats(
+        n.x * 0.02,
+        n.y * 0.02,
+        n.z * 0.02
+      );
+
+      const speed = 1.6 + Math.random() * 2.2;
+      const spreadX = (Math.random() - 0.5) * 1.2;
+      const spreadY = (Math.random() - 0.5) * 1.2;
+      const spreadZ = (Math.random() - 0.5) * 1.2;
+      const vel = new Vector3(
+        (n.x + spreadX) * speed,
+        (n.y + Math.abs(spreadY) * 0.5) * speed,
+        (n.z + spreadZ) * speed
+      );
+
+      this.particles.push({
+        mesh: drop,
+        vel,
+        gravity: -10.0,
+        age: 0,
+        lifetime: 0.16 + Math.random() * 0.1,
+        initialScale: 1.0,
+        endScale: 0.2,
+        initialAlpha: 1.0,
+      });
+    }
+  }
+
+  /**
    * Emits a subtle puff of barrel smoke from the muzzle that gently drifts
    * upward and fades out after releasing a sustained burst.
    */
@@ -392,7 +453,23 @@ export class CombatEffectsManager {
           hit.normal.y,
           hit.normal.z
         );
-        this.spawnSurfaceImpact(hitPoint, hitNormal);
+
+        const hitBody = hit.collider.parent();
+        if (this.onHit) {
+          this.onHit({
+            hitPoint,
+            hitNormal,
+            collider: hit.collider,
+            body: hitBody,
+          });
+        }
+
+        if (hitBody && (hitBody as unknown as { userData?: unknown }).userData) {
+          this.spawnFleshImpact(hitPoint, hitNormal);
+        } else {
+          this.spawnSurfaceImpact(hitPoint, hitNormal);
+        }
+
         b.mesh.dispose();
         this.bullets.splice(i, 1);
         continue;
