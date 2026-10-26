@@ -15,7 +15,6 @@ import { CombatEffectsManager } from './combat';
 import { clamp, type CharacterType } from '../shared';
 import {
   setCrosshairVisible,
-  setCrosshairOpacity,
   setAmmoHudVisible,
   setHealthHudVisible,
   updateAmmoHud as uiUpdateAmmoHud,
@@ -23,6 +22,19 @@ import {
 import { normalizeAngle, lerpAngleY } from './utils/math';
 import { HealthController } from './player/systems/HealthController';
 import { InputController } from './player/systems/InputController';
+import { ViewmodelMotion } from './player/systems/ViewmodelMotion';
+import { WeaponController } from './player/systems/WeaponController';
+import {
+  WALK_SPEED,
+  RUN_SPEED,
+  CROUCH_SPEED,
+  ADS_WALK_SPEED,
+  JUMP_IMPULSE,
+  TURN_SMOOTH_SPEED,
+  STANDING_EYE_OFFSET,
+  FIRE_INTERVAL_SECONDS,
+  HIP_FOV_RAD,
+} from './config/weapons';
 
 export { normalizeAngle, lerpAngleY };
 
@@ -53,30 +65,6 @@ export { createSpieVisual };
 
 import { createMercVisual, createMercWorldVisual } from './player/visuals/merc';
 export { createMercVisual, createMercWorldVisual };
-
-const WALK_SPEED = 7.5;
-const RUN_SPEED = 11.5;
-const CROUCH_SPEED = 4.2;
-const ADS_WALK_SPEED = 4.8;
-const JUMP_IMPULSE = 6.2;
-const TURN_SMOOTH_SPEED = 14.0;
-
-const STANDING_EYE_OFFSET = 0.68;
-const CROUCH_EYE_OFFSET = 0.18;
-
-// Magazine & Firing Constants (M4A1: 30 rounds/mag, 5 magazines total: 1 loaded + 4 reserve)
-const MAGAZINE_CAPACITY = 30;
-const INITIAL_RESERVE_MAGAZINES = 4;
-const FIRE_INTERVAL_SECONDS = 0.1; // 100ms between shots (600 RPM)
-const BURST_SMOKE_THRESHOLD = 3;
-
-// Procedural ADS Constants (~150ms transition, 72 deg hip FOV -> 52 deg ADS FOV)
-const ADS_TRANSITION_DURATION = 0.15;
-const HIP_FOV_RAD = (72 * Math.PI) / 180;
-const ADS_FOV_RAD = (52 * Math.PI) / 180;
-const ADS_OFFSET_X = -0.0547;
-const ADS_OFFSET_Y = 0.0365;
-const ADS_OFFSET_Z = -0.055;
 
 /**
  * Local player controller supporting both 'Spie' (third-person) and 'Merc'
@@ -201,50 +189,49 @@ export class LocalPlayer {
   private readonly climbStartPos = new Vector3();
   private readonly climbTargetPos = new Vector3();
 
-  // Magazine-based ammunition state (1 loaded magazine + 4 individual reserve magazines)
-  private currentMagazineRounds = MAGAZINE_CAPACITY;
-  private readonly reserveMagazines: number[] = [];
+  private readonly weaponController = new WeaponController();
+  private readonly viewmodelMotion = new ViewmodelMotion();
 
-  // Firing & ADS state
-  private fireCooldown = 0;
-  private burstShotsFired = 0;
-  private adsBlend = 0;
-
-  // Queued network shot events for replication
-  private readonly pendingShots: NetworkShotEvent[] = [];
-
-  // Procedural Recoil State (viewmodel kick + camera climb/shake + spring recovery)
-  private recoilPosX = 0;
-  private recoilPosY = 0;
-  private recoilPosZ = 0;
-  private recoilVelZ = 0;
-  private recoilPitchX = 0;
-  private recoilPitchVelX = 0;
-  private recoilYawY = 0;
-  private camRecoilPitch = 0;
-  private camRecoilYaw = 0;
+  public get currentMagazineRounds(): number {
+    return this.weaponController.currentMagazineRounds;
+  }
+  public set currentMagazineRounds(v: number) {
+    this.weaponController.currentMagazineRounds = v;
+  }
+  public get reserveMagazines(): number[] {
+    return this.weaponController.reserveMagazines;
+  }
+  public get pendingShots(): NetworkShotEvent[] {
+    return this.weaponController.pendingShots;
+  }
+  public get fireCooldown(): number {
+    return this.weaponController.fireCooldown;
+  }
+  public set fireCooldown(v: number) {
+    this.weaponController.fireCooldown = v;
+  }
+  public get burstShotsFired(): number {
+    return this.weaponController.burstShotsFired;
+  }
+  public set burstShotsFired(v: number) {
+    this.weaponController.burstShotsFired = v;
+  }
+  public get adsBlend(): number {
+    return this.viewmodelMotion.adsBlend;
+  }
+  public set adsBlend(v: number) {
+    this.viewmodelMotion.adsBlend = v;
+  }
+  public get currentEyeOffset(): number {
+    return this.viewmodelMotion.currentEyeOffset;
+  }
+  public set currentEyeOffset(v: number) {
+    this.viewmodelMotion.currentEyeOffset = v;
+  }
 
   // First-person viewmodel rig & procedural motion state (Merc)
   private readonly viewmodelRig: TransformNode | null = null;
-  private bobTimer = 0;
-  private bobOffsetX = 0;
-  private bobOffsetY = 0;
-  private bobRollZ = 0;
-
   private wasGrounded = true;
-  private jumpLagY = 0;
-  private jumpPitchX = 0;
-  private landSpringPosY = 0;
-  private landSpringVelY = 0;
-
-  private swayPosX = 0;
-  private swayPosY = 0;
-  private swayRotX = 0;
-  private swayRotY = 0;
-
-  private crouchBlend = 0;
-  private lowReadyBlend = 0;
-  private currentEyeOffset = STANDING_EYE_OFFSET;
 
   // Pre-allocated scratch vectors to avoid GC pauses in the render loop
   private readonly forwardScratch = new Vector3();
@@ -268,11 +255,6 @@ export class LocalPlayer {
       isLocal: true,
       player: this,
     };
-
-    // Initialize 4 reserve magazines of 30 rounds each (5 magazines total with loaded mag)
-    for (let i = 0; i < INITIAL_RESERVE_MAGAZINES; i++) {
-      this.reserveMagazines.push(MAGAZINE_CAPACITY);
-    }
 
     if (characterType === 'Merc') {
       // Invisible physics sync root so no third-person body obstructs the camera
@@ -413,12 +395,7 @@ export class LocalPlayer {
       setHealthHudVisible(false);
       setAmmoHudVisible(true);
       setCrosshairVisible(true);
-      this.currentMagazineRounds = MAGAZINE_CAPACITY;
-      this.reserveMagazines.length = 0;
-      for (let i = 0; i < INITIAL_RESERVE_MAGAZINES; i++) {
-        this.reserveMagazines.push(MAGAZINE_CAPACITY);
-      }
-      this.updateAmmoHud();
+      this.weaponController.resetAmmo();
       if (this.fpCamera) {
         this.scene.activeCamera = this.fpCamera;
       }
@@ -432,34 +409,21 @@ export class LocalPlayer {
    * and loads the next magazine from `reserveMagazines`.
    */
   private tryTacticalReload(): void {
-    const anim = this.visual.getCurrentAnimation();
-    if (anim === 'Reload' || anim === 'Draw') {
-      return;
+    const started = this.weaponController.tryTacticalReload(this.visual, () => {
+      this.isAdsHeld = false;
+      this.isAdsToggled = false;
+      this.stopFiringBurstIfNeeded();
+    });
+    if (started) {
+      this.currentAnim = this.visual.getCurrentAnimation();
     }
-    if (this.reserveMagazines.length <= 0) {
-      return;
-    }
-
-    const started = this.visual.triggerReload?.() ?? false;
-    if (!started) return;
-
-    // Exit ADS and stop firing when reloading
-    this.isAdsHeld = false;
-    this.isAdsToggled = false;
-    this.stopFiringBurstIfNeeded();
-
-    // Discard current magazine and load the next individual magazine
-    const nextMagRounds = this.reserveMagazines.shift() ?? MAGAZINE_CAPACITY;
-    this.currentMagazineRounds = nextMagRounds;
-    this.currentAnim = this.visual.getCurrentAnimation();
-    this.updateAmmoHud();
   }
 
   private stopFiringBurstIfNeeded(): void {
-    if (this.burstShotsFired >= BURST_SMOKE_THRESHOLD) {
-      this.combatEffects.spawnBarrelSmoke(this.visual.muzzleNode);
-    }
-    this.burstShotsFired = 0;
+    this.weaponController.stopFiringBurstIfNeeded(
+      this.combatEffects,
+      this.visual.muzzleNode
+    );
   }
 
   public handleMouseMove(
@@ -490,134 +454,35 @@ export class LocalPlayer {
   }
 
   public consumeJumpEvent(): boolean {
-    const jumped = this.jumpedThisFrame;
-    this.jumpedThisFrame = false;
-    return jumped;
+    return this.inputController.consumeJumpEvent();
   }
 
   public consumePendingShots(): NetworkShotEvent[] {
-    if (this.pendingShots.length === 0) return [];
-    return this.pendingShots.splice(0, this.pendingShots.length);
+    return this.weaponController.consumePendingShots();
   }
 
   /**
-   * Fires a single round from the currently loaded magazine:
-   * - Deducts 1 round and updates the HUD
-   * - Triggers a single-frame randomized muzzle flash at the barrel tip
-   * - Spawns a high-velocity yellow bullet cylinder along the aim ray
-   * - Applies procedural viewmodel recoil snap and camera climb/shake
-   * - Queues a lightweight network shoot event for remote replication
+   * Fires a single round from the currently loaded magazine.
    */
   private fireSingleRound(): void {
     if (!this.fpCamera) return;
-
-    this.currentMagazineRounds = Math.max(0, this.currentMagazineRounds - 1);
-    this.burstShotsFired++;
-    this.updateAmmoHud();
-
-    // Ensure camera and viewmodel world matrices are current before sampling muzzle
-    this.fpCamera.computeWorldMatrix();
-    const muzzleNode = this.visual.muzzleNode;
-    let muzzleOrigin: Vector3;
-    if (muzzleNode) {
-      muzzleNode.computeWorldMatrix(true);
-      muzzleOrigin = muzzleNode.getAbsolutePosition().clone();
-    } else {
-      muzzleOrigin = this.fpCamera.position.clone();
-    }
-
-    // Compute camera center aim ray so bullets converge cleanly on the target point
-    const camPos = this.fpCamera.position;
-    const totalPitch = this.pitchX + this.camRecoilPitch;
-    const totalYaw = this.rotationY + this.camRecoilYaw;
-    const cosP = Math.cos(totalPitch);
-    const aimDir = new Vector3(
-      Math.sin(totalYaw) * cosP,
-      -Math.sin(totalPitch),
-      Math.cos(totalYaw) * cosP
-    ).normalize();
-
-    const aimRay = new RAPIER.Ray(
-      { x: camPos.x, y: camPos.y, z: camPos.z },
-      { x: aimDir.x, y: aimDir.y, z: aimDir.z }
-    );
-    const hit = this.world.castRay(
-      aimRay,
-      150.0,
-      true,
-      undefined,
-      undefined,
-      undefined,
-      this.body
-    );
-
-    const targetDist = hit !== null && hit.timeOfImpact > 1.2 ? hit.timeOfImpact : 120.0;
-    const targetPoint = new Vector3(
-      camPos.x + aimDir.x * targetDist,
-      camPos.y + aimDir.y * targetDist,
-      camPos.z + aimDir.z * targetDist
-    );
-
-    const bulletDir = targetPoint.subtract(muzzleOrigin).normalize();
-
-    // 1. Single-frame randomized muzzle flash at barrel tip
-    this.combatEffects.triggerSingleFrameMuzzleFlash(
-      this.visual.muzzleFlashMesh
-    );
-
-    // 2. Spawn fast yellow bullet projectile from barrel tip
-    this.combatEffects.spawnBullet(muzzleOrigin, bulletDir, this.body);
-
-    // 3. Queue network shoot replication packet
-    this.pendingShots.push({
-      originX: muzzleOrigin.x,
-      originY: muzzleOrigin.y,
-      originZ: muzzleOrigin.z,
-      dirX: bulletDir.x,
-      dirY: bulletDir.y,
-      dirZ: bulletDir.z,
+    this.weaponController.fireSingleRound({
+      world: this.world,
+      body: this.body,
+      fpCamera: this.fpCamera,
+      visual: this.visual,
+      combatEffects: this.combatEffects,
+      viewmodelMotion: this.viewmodelMotion,
+      pitchX: this.pitchX,
+      rotationY: this.rotationY,
+      onAdjustPitch: (delta) => {
+        this.pitchX = clamp(
+          this.pitchX + delta,
+          -Math.PI / 2.15,
+          Math.PI / 2.15
+        );
+      },
     });
-
-    // 4. Procedural Recoil (Viewmodel Snap + Camera Climb & Jitter)
-    const adsFactor = this.adsBlend;
-    const isAds = adsFactor > 0.5;
-
-    // Push viewmodel backward toward camera & kick muzzle upward
-    const kickBackZ = isAds ? 0.015 : 0.024;
-    const kickUpPitch = isAds ? 0.016 : 0.036;
-    const randHoriz = (Math.random() - 0.5) * (isAds ? 0.0025 : 0.009);
-
-    this.recoilPosZ = Math.max(this.recoilPosZ - kickBackZ, -0.055);
-    this.recoilVelZ -= isAds ? 0.18 : 0.32;
-    this.recoilPosY = Math.min(
-      this.recoilPosY + (isAds ? 0.002 : 0.005),
-      0.014
-    );
-    this.recoilPosX = clamp(this.recoilPosX + randHoriz, -0.016, 0.016);
-
-    // In Babylon camera space, negative X rotation pitches the muzzle upward
-    this.recoilPitchX = Math.max(this.recoilPitchX - kickUpPitch, -0.13);
-    this.recoilPitchVelX -= isAds ? 0.35 : 0.75;
-    this.recoilYawY = clamp(this.recoilYawY + randHoriz * 1.4, -0.035, 0.035);
-
-    // Subtle camera climb (upward pitch) and minor horizontal shake
-    const camPitchClimb = isAds ? 0.007 : 0.011;
-    const camYawJitter = (Math.random() - 0.5) * (isAds ? 0.0045 : 0.0085);
-    this.pitchX = clamp(
-      this.pitchX - camPitchClimb * 0.45,
-      -Math.PI / 2.15,
-      Math.PI / 2.15
-    );
-    this.camRecoilPitch = Math.max(
-      this.camRecoilPitch - camPitchClimb * 0.55,
-      -0.065
-    );
-    this.camRecoilYaw = clamp(this.camRecoilYaw + camYawJitter, -0.03, 0.03);
-
-    // If magazine just ran empty after a sustained burst, emit barrel smoke
-    if (this.currentMagazineRounds === 0) {
-      this.stopFiringBurstIfNeeded();
-    }
   }
 
   public update(arcCamera: ArcRotateCamera | null, dtSeconds = 1 / 60): void {
@@ -695,14 +560,14 @@ export class LocalPlayer {
         this.body.applyImpulse({ x: 0, y: JUMP_IMPULSE, z: 0 }, true);
         this.jumpedThisFrame = true;
         grounded = false;
-        this.jumpLagY = -0.016;
-        this.jumpPitchX = 0.022;
+        this.viewmodelMotion.jumpLagY = -0.016;
+        this.viewmodelMotion.jumpPitchX = 0.022;
       }
       this.jumpRequested = false;
     }
 
     if (!this.wasGrounded && grounded) {
-      this.landSpringVelY = -0.18;
+      this.viewmodelMotion.landSpringVelY = -0.18;
     }
     this.wasGrounded = grounded;
 
@@ -718,192 +583,55 @@ export class LocalPlayer {
     this.mesh.rotation.y = this.rotationY;
 
     // 4. Procedural ADS transition (~150ms), Camera FOV zoom, and Crosshair fade
-    const targetAds = wantsAds ? 1.0 : 0.0;
-    const adsStep = dtSeconds / ADS_TRANSITION_DURATION;
-    if (this.adsBlend < targetAds) {
-      this.adsBlend = Math.min(targetAds, this.adsBlend + adsStep);
-    } else if (this.adsBlend > targetAds) {
-      this.adsBlend = Math.max(targetAds, this.adsBlend - adsStep);
-    }
-
-    setCrosshairOpacity(1.0 - this.adsBlend);
+    this.viewmodelMotion.updateAds(wantsAds, dtSeconds);
 
     // 5. Procedural Crouching & Camera Recoil Spring Recovery
-    const targetCrouch = isCrouching ? 1.0 : 0.0;
-    this.crouchBlend +=
-      (targetCrouch - this.crouchBlend) * Math.min(1.0, dtSeconds * 10.0);
-    this.currentEyeOffset =
-      STANDING_EYE_OFFSET +
-      (CROUCH_EYE_OFFSET - STANDING_EYE_OFFSET) * this.crouchBlend;
-
-    const camRecoilRecovery = Math.min(1.0, dtSeconds * 14.0);
-    this.camRecoilPitch += (0 - this.camRecoilPitch) * camRecoilRecovery;
-    this.camRecoilYaw += (0 - this.camRecoilYaw) * camRecoilRecovery;
-
-    if (this.fpCamera) {
-      this.fpCamera.fov =
-        HIP_FOV_RAD + (ADS_FOV_RAD - HIP_FOV_RAD) * this.adsBlend;
-      this.fpCamera.position.set(pos.x, pos.y + this.currentEyeOffset, pos.z);
-      this.fpCamera.rotation.set(
-        clamp(
-          this.pitchX + this.camRecoilPitch,
-          -Math.PI / 2.15,
-          Math.PI / 2.15
-        ),
-        this.rotationY + this.camRecoilYaw,
-        0
-      );
-    }
+    this.viewmodelMotion.updateCameraAndCrouch(
+      isCrouching,
+      pos,
+      this.pitchX,
+      this.rotationY,
+      this.fpCamera,
+      dtSeconds
+    );
 
     // 6. Automatic Firing Logic (100ms cooldown, blocked during Reload/Draw/Empty)
-    this.fireCooldown = Math.max(0, this.fireCooldown - dtSeconds);
+    this.weaponController.updateCooldown(dtSeconds);
     if (
       this.isFiringHeld &&
       canAimOrFire &&
-      this.currentMagazineRounds > 0 &&
-      this.fireCooldown <= 0
+      this.weaponController.currentMagazineRounds > 0 &&
+      this.weaponController.fireCooldown <= 0
     ) {
       this.fireSingleRound();
-      this.fireCooldown = FIRE_INTERVAL_SECONDS;
+      this.weaponController.fireCooldown = FIRE_INTERVAL_SECONDS;
     }
 
     // 7. Viewmodel Recoil Spring Recovery
-    const recoilStiff = 180.0;
-    const recoilDamp = 18.0;
-    this.recoilVelZ +=
-      (-recoilStiff * this.recoilPosZ - recoilDamp * this.recoilVelZ) *
-      dtSeconds;
-    this.recoilPosZ += this.recoilVelZ * dtSeconds;
-
-    this.recoilPitchVelX +=
-      (-recoilStiff * this.recoilPitchX - recoilDamp * this.recoilPitchVelX) *
-      dtSeconds;
-    this.recoilPitchX += this.recoilPitchVelX * dtSeconds;
-
-    const recoilReturnLerp = Math.min(1.0, dtSeconds * 16.0);
-    this.recoilPosX += (0 - this.recoilPosX) * recoilReturnLerp;
-    this.recoilPosY += (0 - this.recoilPosY) * recoilReturnLerp;
-    this.recoilYawY += (0 - this.recoilYawY) * recoilReturnLerp;
+    this.viewmodelMotion.updateRecoilSprings(dtSeconds);
 
     // 8. Procedural Movement Feel + ADS + Recoil on Viewmodel Rig
-    if (this.viewmodelRig) {
-      const adsSteadiness = 1.0 - 0.78 * this.adsBlend;
+    this.viewmodelMotion.updateViewmodelRig({
+      dtSeconds,
+      wantsAds,
+      isCrouching,
+      isSprinting,
+      isMovingHorizontally,
+      grounded,
+      velY: this.body.linvel().y,
+      lookDeltaX: this.lookDeltaX,
+      lookDeltaY: this.lookDeltaY,
+      currentAnim: this.currentAnim,
+      pos,
+      pitchX: this.pitchX,
+      rotationY: this.rotationY,
+      fpCamera: this.fpCamera,
+      viewmodelRig: this.viewmodelRig,
+    });
 
-      // (a) Footstep Bobbing while moving on the ground
-      if (grounded && isMovingHorizontally) {
-        const bobFreq = isCrouching ? 6.5 : isSprinting ? 13.0 : 9.5;
-        const bobAmpX =
-          (isCrouching ? 0.005 : isSprinting ? 0.014 : 0.009) * adsSteadiness;
-        const bobAmpY =
-          (isCrouching ? 0.006 : isSprinting ? 0.016 : 0.01) * adsSteadiness;
-        this.bobTimer += dtSeconds * bobFreq;
-
-        const targetBobX = Math.cos(this.bobTimer) * bobAmpX;
-        const targetBobY = -Math.abs(Math.sin(this.bobTimer)) * bobAmpY;
-        const targetBobRoll = Math.cos(this.bobTimer) * 0.012 * adsSteadiness;
-
-        const bobLerp = Math.min(1.0, dtSeconds * 12.0);
-        this.bobOffsetX += (targetBobX - this.bobOffsetX) * bobLerp;
-        this.bobOffsetY += (targetBobY - this.bobOffsetY) * bobLerp;
-        this.bobRollZ += (targetBobRoll - this.bobRollZ) * bobLerp;
-      } else {
-        const damp = Math.min(1.0, dtSeconds * 10.0);
-        this.bobOffsetX += (0 - this.bobOffsetX) * damp;
-        this.bobOffsetY += (0 - this.bobOffsetY) * damp;
-        this.bobRollZ += (0 - this.bobRollZ) * damp;
-      }
-
-      // (b) Jump & Landing Reaction
-      const velY = this.body.linvel().y;
-      const targetAirLagY = grounded
-        ? 0
-        : clamp(-velY * 0.002, -0.016, 0.016) * adsSteadiness;
-      const targetAirPitchX = grounded
-        ? 0
-        : clamp(velY * 0.0035, -0.022, 0.022) * adsSteadiness;
-      this.jumpLagY +=
-        (targetAirLagY - this.jumpLagY) * Math.min(1.0, dtSeconds * 12.0);
-      this.jumpPitchX +=
-        (targetAirPitchX - this.jumpPitchX) * Math.min(1.0, dtSeconds * 12.0);
-
-      const springStiffness = 170.0;
-      const springDamping = 16.0;
-      const springAccel =
-        -springStiffness * this.landSpringPosY -
-        springDamping * this.landSpringVelY;
-      this.landSpringVelY += springAccel * dtSeconds;
-      this.landSpringPosY += this.landSpringVelY * dtSeconds;
-
-      // (c) Snappy Look Sway
-      const targetSwayX =
-        clamp(-this.lookDeltaX * 0.00028, -0.01, 0.01) * adsSteadiness;
-      const targetSwayY =
-        clamp(this.lookDeltaY * 0.00028, -0.01, 0.01) * adsSteadiness;
-      const targetSwayRotY =
-        clamp(-this.lookDeltaX * 0.00055, -0.018, 0.018) * adsSteadiness;
-      const targetSwayRotX =
-        clamp(-this.lookDeltaY * 0.00055, -0.018, 0.018) * adsSteadiness;
-
-      const swayLerp = Math.min(1.0, dtSeconds * 18.0);
-      this.swayPosX += (targetSwayX - this.swayPosX) * swayLerp;
-      this.swayPosY += (targetSwayY - this.swayPosY) * swayLerp;
-      this.swayRotX += (targetSwayRotX - this.swayRotX) * swayLerp;
-      this.swayRotY += (targetSwayRotY - this.swayRotY) * swayLerp;
-
-      const deltaDecay = Math.min(1.0, dtSeconds * 28.0);
-      this.lookDeltaX *= 1.0 - deltaDecay;
-      this.lookDeltaY *= 1.0 - deltaDecay;
-
-      // (d) Crouch & Low-Ready ('H' key) offsets (suppressed while aiming down sights)
-      const isLowReady =
-        this.currentAnim === 'Hide' || this.currentAnim === 'Hidden';
-      const targetLowReady = isLowReady ? 1.0 : 0.0;
-      this.lowReadyBlend +=
-        (targetLowReady - this.lowReadyBlend) * Math.min(1.0, dtSeconds * 9.0);
-
-      const hipFactor = 1.0 - this.adsBlend;
-      const crouchOffsetX = -0.01 * this.crouchBlend * hipFactor;
-      const crouchOffsetY = -0.022 * this.crouchBlend * hipFactor;
-      const crouchRollZ = -0.035 * this.crouchBlend * hipFactor;
-
-      const lowReadyOffsetX = -0.012 * this.lowReadyBlend;
-      const lowReadyOffsetY = -0.032 * this.lowReadyBlend;
-      const lowReadyPitchX = 0.08 * this.lowReadyBlend;
-      const lowReadyYawY = -0.08 * this.lowReadyBlend;
-      const lowReadyRollZ = -0.06 * this.lowReadyBlend;
-
-      // (e) Procedural ADS iron-sight centering shift
-      const adsPosX = ADS_OFFSET_X * this.adsBlend;
-      const adsPosY = ADS_OFFSET_Y * this.adsBlend;
-      const adsPosZ = ADS_OFFSET_Z * this.adsBlend;
-
-      this.viewmodelRig.position.set(
-        adsPosX +
-          this.bobOffsetX +
-          this.swayPosX +
-          crouchOffsetX +
-          lowReadyOffsetX +
-          this.recoilPosX,
-        adsPosY +
-          this.bobOffsetY +
-          this.jumpLagY +
-          this.landSpringPosY +
-          this.swayPosY +
-          crouchOffsetY +
-          lowReadyOffsetY +
-          this.recoilPosY,
-        adsPosZ + this.recoilPosZ
-      );
-
-      this.viewmodelRig.rotation.set(
-        this.jumpPitchX +
-          this.swayRotX +
-          lowReadyPitchX +
-          this.recoilPitchX,
-        this.swayRotY + lowReadyYawY + this.recoilYawY,
-        this.bobRollZ + crouchRollZ + lowReadyRollZ
-      );
-    }
+    const deltaDecay = Math.min(1.0, dtSeconds * 28.0);
+    this.lookDeltaX *= 1.0 - deltaDecay;
+    this.lookDeltaY *= 1.0 - deltaDecay;
   }
 
   private toggleSpieCrouch(): void {
