@@ -1,7 +1,7 @@
 Last verified: 2026-10-26 at commit 208a701
 
 ## 1. What this is
-3D asymmetrical LAN arena shooter (TypeScript, Babylon.js, Rapier3D, Colyseus). Two playable classes: Mercenary (`'Merc'`, first-person, rifle ADS/recoil) and Spy (`'Spie'`, third-person parkour/mantling). Scope: obstacle arena, client hitscan ballistics, skeletal animations, death/respawn loop, 20 Hz state sync for $\le 32$ players.
+3D asymmetrical LAN arena shooter (TypeScript, Babylon.js, Rapier3D, Colyseus). Two playable classes: Mercenary (`'Merc'`, first-person, rifle ADS/recoil) and Spy (`'Spy'`, third-person parkour/mantling). Scope: obstacle arena, client hitscan ballistics, skeletal animations, death/respawn loop, 20 Hz state sync for $\le 32$ players.
 
 ## 2. Stack and commands
 
@@ -29,7 +29,7 @@ Last verified: 2026-10-26 at commit 208a701
 ## 3. Current state
 
 ### Implemented
-- Classes: `'Merc'` (first-person) and `'Spie'` (third-person parkour).
+- Classes: `'Merc'` (first-person) and `'Spy'` (third-person parkour).
 - Mercenary: ADS sights, sway/bob, recoil springs, 30/120 ammo, reload timer, muzzle flash, sparks, smoke.
 - Spy: Raycast obstacle checks, climb, ledge grab, mantling, crouch toggle, hide pose.
 - Physics: Rapier3D kinematic cylinder, ground raycasts, static obstacle boxes.
@@ -93,7 +93,7 @@ Last verified: 2026-10-26 at commit 208a701
 
 | Message | Dir | Payload | Handler |
 | :--- | :--- | :--- | :--- |
-| `selectCharacter` | C $\to$ S | `{ characterType: 'Spie' \| 'Merc' }` | `server/handlers/characterHandlers.ts` |
+| `selectCharacter` | C $\to$ S | `{ characterType: 'Spy' \| 'Merc' }` | `server/handlers/characterHandlers.ts` |
 | `move` | C $\to$ S | `{ x, y, z, rotationY, anim?, characterType? }` | `server/handlers/movementHandlers.ts` |
 | `jump` | C $\to$ S | `{ y?, anim? }` | `server/handlers/movementHandlers.ts` |
 | `shoot` | C $\to$ S | `{ originX..Z, dirX..Z }` | `server/handlers/combatHandlers.ts` |
@@ -120,7 +120,7 @@ All shared interfaces live in `shared/` (`types.ts`, `protocol.ts`, `combatConfi
 | **Weapon ammo, recoil, sway, ADS** | `src/config/weapons.ts` |
 | **Mercenary speed or jump** | `src/config/weapons.ts`, `player/systems/MercMovement.ts` |
 | **New player subsystem** | `player/systems/`, expose in `index.ts`, add to `LocalPlayer.ts` |
-| **Character 3D models or rigs** | `player/visuals/spie/` or `player/visuals/merc/` |
+| **Character 3D models or rigs** | `player/visuals/spy/` or `player/visuals/merc/` |
 | **HUD gauges & styling** | `ui/hud/`, `styles/hud.css` or `crosshair.css` |
 | **Combat VFX, muzzle flash, sparks** | `combat/effects/`, `combat/muzzleFlash.ts` |
 | **Arena size, obstacles, colliders** | `config/arena.ts`, `world/obstacles.ts`, `physics/colliders.ts` |
@@ -130,7 +130,7 @@ All shared interfaces live in `shared/` (`types.ts`, `protocol.ts`, `combatConfi
 
 ## 7. Gotchas
 
-1. **Wire names `'Spie'` & `'Merc'`**: Case-sensitive wire protocol string literals (`shared/types.ts`, `server/schema/GameState.ts`). Do not rename to 'Spy'.
+1. **Wire names `'Spy'` & `'Merc'`**: Case-sensitive wire protocol string literals (`shared/types.ts`, `server/schema/GameState.ts`). Use `'Spy'` (matches 3D asset filename `spy.glb`).
 2. **Server has no health state**: `Player` schema lacks HP; server relays damage to victim client for local deduction (`GameState.ts`, `HealthController.ts`).
 3. **Client-authoritative hit detection**: Raycasts run on shooter; server forwards damage without line-of-sight checks (`hitHandler.ts`, `combatHandlers.ts`).
 4. **Frame-dependent physics step**: `world.step()` uses delta-time; jump arcs vary across monitor refresh rates (`src/app/gameLoop.ts`).

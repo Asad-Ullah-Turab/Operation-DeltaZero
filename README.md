@@ -17,7 +17,7 @@
 - **WASM Physics Engine**: Rapier3D continuous collision detection with kinematic player cylinder colliders, raycasting, dynamic ground detection, and obstacle collision.
 - **Dual Class Gameplay**:
   - **Mercenary**: Immersive first-person tactical shooter experience with magazine tracking, procedural weapon sway, ADS iron sights, and recoil kick.
-  - **Spie**: Third-person agility operative with a linear-crossfaded multi-track animation state machine, snappy camera-facing locomotion, and dedicated strafing modes.
+  - **Spy**: Third-person agility operative with a linear-crossfaded multi-track animation state machine, snappy camera-facing locomotion, and dedicated strafing modes.
 - **Cross-Platform Native Desktop Shell**: Packaged with Tauri v2 for high-performance Linux and Windows native execution without browser chrome overhead.
 - **Dynamic Combat VFX**: Particle muzzle flashes, ballistic yellow tracers, bullet surface impact sparks, and barrel smoke emission after sustained fire bursts.
 
@@ -36,7 +36,7 @@
   - **Procedural Rigging**: Spring-damper jump lag, landing compression, crouching offsets, and mouse-look sway inertia.
   - **Low-Ready**: Toggleable low-ready weapon stow ('H') to clear screen space when traversing the arena.
 
-### 2. Spie (Third-Person Agility Operative)
+### 2. Spy (Third-Person Agility Operative)
 - **Third-Person Perspective**: Replicated agent model (`spy.glb`) with an orbit camera.
 - **Locomotion State Machine**: Multi-track animation blending system featuring:
   - **Crisp Crossfading**: Linear rate blending (~70ms) eliminating asymptotic decay tails and skating.
@@ -67,7 +67,7 @@
 | **R** | Tactical Magazine Reload |
 | **H** | Low-Ready Weapon Stow / Ready Toggle |
 
-### Spie Specifics
+### Spy Specifics
 | Input | Action |
 | :--- | :--- |
 | **Mouse Orbit** | Free camera orbit around operative |
@@ -92,7 +92,7 @@
 ```
 
 - **`src/app/`**: Startup pipeline, hardware-accelerated scene lifecycle, orbital & first-person cameras, and game render loop.
-- **`src/player/`**: Operative controllers, composed systems (health, input, parkour, weapons, movement), and decomposed visual avatar rigs (`Merc` & `Spie`).
+- **`src/player/`**: Operative controllers, composed systems (health, input, parkour, weapons, movement), and decomposed visual avatar rigs (`Merc` & `Spy`).
 - **`src/combat/`**: Ballistics simulation, projectile pools, muzzle flashes, surface impact sparks, and barrel smoke.
 - **`src/network/`**: Colyseus WebSocket networking, remote player avatar interpolation, and room message routing.
 - **`src/physics/`**: Rapier3D WASM world initialization, kinematic ground colliders, obstacle bounding boxes, and player cylinder bodies.
@@ -140,7 +140,7 @@ To run the multiplayer game on your local machine:
    ```
    *Open `http://localhost:5173` in your browser (or multiple tabs to test multiplayer).*
 
-3. Click **Spie** or **Mercenary** on the class selection screen to deploy into the arena.
+3. Click **Spy** or **Mercenary** on the class selection screen to deploy into the arena.
 
 ---
 
@@ -180,7 +180,7 @@ Operation-DeltaZero/
 │       └── characters/
 │           ├── fps_merc_m4a1.glb   # Mercenary first-person arms + weapon
 │           ├── mercenary.glb       # Mercenary third-person world model
-│           └── spy.glb             # Spie third-person animated operative
+│           └── spy.glb             # Spy third-person animated operative
 ├── server/
 │   ├── index.ts                    # Colyseus HTTP/WebSocket server entry
 │   ├── GameRoom.ts                 # Authoritative game room logic

@@ -9,7 +9,7 @@ import type { CharacterAssets } from '../types';
 import { normalizeMercContainerGeometry } from './normalizeMerc';
 
 /**
- * Preloads `spy.glb` (Spie), `fps_merc_m4a1.glb` (FPS Merc viewmodel),
+ * Preloads `spy.glb` (Spy), `fps_merc_m4a1.glb` (FPS Merc viewmodel),
  * and `mercenary.glb` (third-person Merc world model) into reusable Babylon AssetContainers.
  */
 export async function loadCharacterAssets(

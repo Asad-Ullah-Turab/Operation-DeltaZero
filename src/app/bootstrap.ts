@@ -38,7 +38,7 @@ export async function bootstrap(): Promise<void> {
   // 3. Build Ground & Obstacle Colliders and Visual Meshes
   buildArena(scene, world);
 
-  // 4. Await character selection choice ('Spie' or 'Merc')
+  // 4. Await character selection choice ('Spy' or 'Merc')
   const selectedCharacterType = await selectionPromise;
   setCrosshairVisible(selectedCharacterType === 'Merc');
 

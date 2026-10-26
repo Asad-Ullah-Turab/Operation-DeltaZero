@@ -49,7 +49,7 @@ export function startGameLoop(params: GameLoopParams): void {
     // 3. Step bullets, single-frame muzzle flashes, surface impacts & barrel smoke
     combatEffects.update(dtSeconds);
 
-    // 4. Keep ArcRotateCamera orbit center synced when playing as Spie
+    // 4. Keep ArcRotateCamera orbit center synced when playing as Spy
     if (arcCamera) {
       arcCamera.target.copyFrom(localPlayer.mesh.position);
     }

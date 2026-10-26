@@ -66,7 +66,7 @@ multiplayer-cylinder/
 │   │   ├── assets/                  # GLB asset loading and vertex normalization
 │   │   ├── visuals/                 # Avatar decomposition
 │   │   │   ├── hitboxClassifier.ts  # Shared distance & fallback hitzone classifier
-│   │   │   ├── spie/                # Spie multi-track animation & root motion stripping
+│   │   │   ├── spy/                 # Spy multi-track animation & root motion stripping
 │   │   │   └── merc/                # Merc viewmodel & world avatar factories
 │   │   ├── systems/                 # Composed player controllers
 │   │   │   ├── HealthController.ts  # Health points, damage, and health HUD
@@ -75,7 +75,7 @@ multiplayer-cylinder/
 │   │   │   ├── WeaponController.ts  # Magazine state, reload, and ballistics coordination
 │   │   │   ├── ParkourController.ts # Ledge raycasting and mantling interpolation curves
 │   │   │   ├── MercMovement.ts      # First-person locomotion physics
-│   │   │   └── SpieMovement.ts      # Third-person locomotion & camera-locked strafing
+│   │   │   └── SpyMovement.ts       # Third-person locomotion & camera-locked strafing
 │   │   └── index.ts                 # Player barrel
 │   ├── combat/                      # Ballistics simulation & combat VFX
 │   │   ├── types.ts                 # Active bullet, particle, and hit event types
@@ -182,7 +182,7 @@ sequenceDiagram
     autonumber
     participant Sim as BulletSimulator
     participant Hit as setupHitHandler
-    participant Target as LocalPlayer (Spie)
+    participant Target as LocalPlayer (Spy)
     participant Net as NetworkManager
     participant Svr as Colyseus Server
 
@@ -222,7 +222,7 @@ sequenceDiagram
     Net->>Svr: send('playerDied')
     Flow->>UI: Show character selection modal
     actor User as Player
-    User->>UI: Selects Character ('Merc' or 'Spie')
+    User->>UI: Selects Character ('Merc' or 'Spy')
     UI->>Flow: Callback(selectedType)
     Flow->>Local: respawn(selectedType, arcCamera)
     Flow->>Net: sendSelectCharacter(selectedType)
