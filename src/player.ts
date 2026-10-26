@@ -4,12 +4,10 @@ import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
 import { FreeCamera } from '@babylonjs/core/Cameras/freeCamera';
-import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 import { AssetContainer } from '@babylonjs/core/assetContainer';
 import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
 import { Animation } from '@babylonjs/core/Animations/animation';
 import { Skeleton } from '@babylonjs/core/Bones/skeleton';
-import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 import '@babylonjs/loaders/glTF/2.0';
 import {
   RAPIER,
@@ -34,20 +32,26 @@ export { normalizeAngle, lerpAngleY };
 
 export type { CharacterType };
 
-export interface CharacterAssets {
-  spieContainer: AssetContainer;
-  mercContainer: AssetContainer;
-  mercenaryContainer: AssetContainer;
-}
+import {
+  type CharacterAssets,
+  type NetworkShotEvent,
+  type SpieAnimContext,
+  type CharacterVisual,
+  type SpieAnimationName,
+  type SpieTrack,
+  SPIE_TRACK_CONFIGS,
+} from './player/types';
 
-export interface NetworkShotEvent {
-  originX: number;
-  originY: number;
-  originZ: number;
-  dirX: number;
-  dirY: number;
-  dirZ: number;
-}
+export type { CharacterAssets, NetworkShotEvent, SpieAnimContext, CharacterVisual, SpieAnimationName, SpieTrack };
+export { SPIE_TRACK_CONFIGS };
+
+import {
+  loadCharacterAssets,
+  loadPlayerAssetContainer,
+  computeModelHeightAndBaseY,
+} from './player/assets';
+
+export { loadCharacterAssets, loadPlayerAssetContainer };
 
 const WALK_SPEED = 7.5;
 const RUN_SPEED = 11.5;
@@ -76,221 +80,11 @@ const ADS_OFFSET_Y = 0.0365;
 const ADS_OFFSET_Z = -0.055;
 
 /**
- * In `fps_merc_m4a1.glb`, the arm/hand/shirt meshes (`Object_91`, `Object_92`,
- * `Object_93`) were exported with un-normalized FBX unit coordinates (-3840x
- * relative to the single shared skin's inverseBindMatrices). Scaling their
- * bind-pose vertex positions by `-1 / 3840` aligns the hands, wrists, and
- * forearms directly onto the M4A1 weapon bones.
- */
-const ARM_VERTEX_CORRECTION_SCALE = -1.0 / 3840.0;
-
-/**
  * Frame on the baked `Hide` track where the rifle is lowered slightly into a
  * soldier low-ready stance while remaining visible in the camera frame.
  */
 const HIDE_LOW_READY_FRAME = 10;
 const DRAW_FROM_LOW_READY_FRAME = 22;
-
-export interface SpieAnimContext {
-  isMoving: boolean;
-  isStrafing: boolean; // right click held
-  moveDir: Vector3;
-  camForward: Vector3;
-  camRight: Vector3;
-  camAlpha: number;
-  rotationY: number;
-  isCrouched?: boolean;
-  isClimbing?: boolean;
-  isGrounded?: boolean;
-}
-
-export interface CharacterVisual {
-  root: Mesh;
-  characterType: CharacterType;
-  muzzleNode: TransformNode | null;
-  muzzleFlashMesh: Mesh | null;
-  playAnimation: (animName: string) => void;
-  updateAnimation?: (dtSeconds: number, context: SpieAnimContext) => void;
-  triggerReload?: () => boolean;
-  triggerHide?: () => void;
-  getCurrentAnimation: () => string;
-  getHitZone?: (hitPoint: Vector3) => 'head' | 'torso' | 'limbs';
-  dispose: () => void;
-}
-
-/**
- * Fixes the bind-pose vertex scale and winding on the arm/hand/shirt meshes
- * (`Object_91`, `Object_92`, `Object_93`) inside `fps_merc_m4a1.glb` so they
- * attach properly to the M4A1 instead of appearing gigantic in the sky.
- */
-function normalizeMercContainerGeometry(container: AssetContainer): void {
-  const targetNames = new Set(['Object_91', 'Object_92', 'Object_93']);
-
-  for (const mesh of container.meshes) {
-    if (!targetNames.has(mesh.name)) continue;
-
-    const positions = mesh.getVerticesData(VertexBuffer.PositionKind);
-    if (positions && positions.length > 0) {
-      let maxAbs = 0;
-      for (let i = 0; i < Math.min(positions.length, 60); i++) {
-        const a = Math.abs(positions[i]);
-        if (a > maxAbs) maxAbs = a;
-      }
-
-      if (maxAbs > 100) {
-        const scaledPos = new Float32Array(positions.length);
-        for (let i = 0; i < positions.length; i++) {
-          scaledPos[i] = positions[i] * ARM_VERTEX_CORRECTION_SCALE;
-        }
-        mesh.setVerticesData(VertexBuffer.PositionKind, scaledPos, false);
-
-        const normals = mesh.getVerticesData(VertexBuffer.NormalKind);
-        if (normals && normals.length > 0) {
-          const flippedNormals = new Float32Array(normals.length);
-          for (let i = 0; i < normals.length; i++) {
-            flippedNormals[i] = -normals[i];
-          }
-          mesh.setVerticesData(VertexBuffer.NormalKind, flippedNormals, false);
-        }
-
-        const indices = mesh.getIndices();
-        if (indices && indices.length >= 3) {
-          const flippedIndices = new Uint32Array(indices.length);
-          for (let i = 0; i < indices.length; i += 3) {
-            flippedIndices[i] = indices[i];
-            flippedIndices[i + 1] = indices[i + 2];
-            flippedIndices[i + 2] = indices[i + 1];
-          }
-          mesh.setIndices(flippedIndices, null);
-        }
-
-        if (mesh.material) {
-          mesh.material.backFaceCulling = false;
-        }
-
-        mesh.refreshBoundingInfo({});
-      }
-    }
-  }
-}
-
-/**
- * Preloads `spy.glb` (Spie), `fps_merc_m4a1.glb` (FPS Merc viewmodel),
- * and `mercenary.glb` (third-person Merc world model) into reusable Babylon AssetContainers.
- */
-export async function loadCharacterAssets(
-  scene: Scene
-): Promise<CharacterAssets> {
-  const [spieContainer, mercContainer, mercenaryContainer] = await Promise.all([
-    SceneLoader.LoadAssetContainerAsync(
-      './assets/characters/',
-      'spy.glb',
-      scene
-    ),
-    SceneLoader.LoadAssetContainerAsync(
-      './assets/characters/',
-      'fps_merc_m4a1.glb',
-      scene
-    ),
-    SceneLoader.LoadAssetContainerAsync(
-      './assets/characters/',
-      'mercenary.glb',
-      scene
-    ),
-  ]);
-
-  normalizeMercContainerGeometry(mercContainer);
-
-  return { spieContainer, mercContainer, mercenaryContainer };
-}
-
-/**
- * Legacy helper alias for loading `spy.glb`.
- */
-export async function loadPlayerAssetContainer(
-  scene: Scene
-): Promise<AssetContainer> {
-  return SceneLoader.LoadAssetContainerAsync(
-    './assets/characters/',
-    'spy.glb',
-    scene
-  );
-}
-
-/**
- * Computes the raw bounding-box height and minimum base Y of a character asset container
- * to automatically scale and ground any custom imported character model.
- */
-function computeModelHeightAndBaseY(container: AssetContainer): {
-  height: number;
-  baseY: number;
-} {
-  let minY = Infinity;
-  let maxY = -Infinity;
-  for (const m of container.meshes) {
-    if (m.name === '__root__' || m.getTotalVertices() === 0) continue;
-    m.computeWorldMatrix(true);
-    const b = m.getBoundingInfo().boundingBox;
-    if (b.minimumWorld.y < minY) minY = b.minimumWorld.y;
-    if (b.maximumWorld.y > maxY) maxY = b.maximumWorld.y;
-  }
-  const height = maxY - minY;
-  if (!Number.isFinite(height) || height < 0.01) {
-    return { height: 1.76, baseY: 0 };
-  }
-  return { height, baseY: Number.isFinite(minY) ? minY : 0 };
-}
-
-
-
-export type SpieAnimationName =
-  | 'idle'
-  | 'walking'
-  | 'start-walking'
-  | 'stop-walking'
-  | 'walking-turn-180'
-  | 'left-turn'
-  | 'right-turn'
-  | 'left-strafe-walking'
-  | 'right-strafe-walking'
-  | 'crouch-idle'
-  | 'crouched-walking'
-  | 'stand-to-crouch'
-  | 'crouch-to-stand'
-  | 'jump'
-  | 'hang-to-crouch';
-
-interface SpieTrack {
-  name: SpieAnimationName;
-  group: AnimationGroup;
-  currentWeight: number;
-  targetWeight: number;
-  isLooping: boolean;
-  speedRatio: number;
-  durationSec: number;
-}
-
-const SPIE_TRACK_CONFIGS: Array<{
-  name: SpieAnimationName;
-  isLooping: boolean;
-  speedRatio: number;
-}> = [
-  { name: 'idle', isLooping: true, speedRatio: 1.0 },
-  { name: 'walking', isLooping: true, speedRatio: 1.25 },
-  { name: 'left-strafe-walking', isLooping: true, speedRatio: 1.25 },
-  { name: 'right-strafe-walking', isLooping: true, speedRatio: 1.25 },
-  { name: 'start-walking', isLooping: false, speedRatio: 1.45 },
-  { name: 'stop-walking', isLooping: false, speedRatio: 1.45 },
-  { name: 'walking-turn-180', isLooping: false, speedRatio: 1.5 },
-  { name: 'left-turn', isLooping: false, speedRatio: 1.4 },
-  { name: 'right-turn', isLooping: false, speedRatio: 1.4 },
-  { name: 'crouch-idle', isLooping: true, speedRatio: 1.0 },
-  { name: 'crouched-walking', isLooping: true, speedRatio: 1.25 },
-  { name: 'stand-to-crouch', isLooping: false, speedRatio: 1.2 },
-  { name: 'crouch-to-stand', isLooping: false, speedRatio: 1.2 },
-  { name: 'jump', isLooping: false, speedRatio: 1.15 },
-  { name: 'hang-to-crouch', isLooping: false, speedRatio: 1.0 },
-];
 
 function resolveSpieAnimName(rawName: string): SpieAnimationName | null {
   const lower = rawName.toLowerCase();
