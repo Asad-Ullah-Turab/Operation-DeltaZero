@@ -8,7 +8,6 @@ import '@babylonjs/loaders/glTF/2.0';
 import {
   RAPIER,
   createPlayerCylinderBody,
-  isPlayerGrounded,
 } from './physics';
 import { CombatEffectsManager } from './combat';
 import { clamp, type CharacterType } from '../shared';
@@ -16,26 +15,20 @@ import {
   setCrosshairVisible,
   setAmmoHudVisible,
   setHealthHudVisible,
-  updateAmmoHud as uiUpdateAmmoHud,
 } from './ui';
 import { normalizeAngle, lerpAngleY } from './utils/math';
 import { HealthController } from './player/systems/HealthController';
 import { InputController } from './player/systems/InputController';
 import { ViewmodelMotion } from './player/systems/ViewmodelMotion';
 import { WeaponController } from './player/systems/WeaponController';
+import { ParkourController } from './player/systems/ParkourController';
+import { updateMercFirstPerson } from './player/systems/MercMovement';
 import {
-  ParkourController,
-  type LedgeInfo,
-} from './player/systems/ParkourController';
+  updateSpieThirdPerson,
+  toggleSpieCrouch,
+} from './player/systems/SpieMovement';
 import {
-  WALK_SPEED,
-  RUN_SPEED,
-  CROUCH_SPEED,
-  ADS_WALK_SPEED,
-  JUMP_IMPULSE,
-  TURN_SMOOTH_SPEED,
   STANDING_EYE_OFFSET,
-  FIRE_INTERVAL_SECONDS,
   HIP_FOV_RAD,
 } from './config/weapons';
 
@@ -331,7 +324,7 @@ export class LocalPlayer {
   }
 
   private updateAmmoHud(): void {
-    uiUpdateAmmoHud(this.currentMagazineRounds, this.reserveMagazines.length);
+    this.weaponController.updateAmmoHud();
   }
 
   /**
@@ -501,332 +494,95 @@ export class LocalPlayer {
   }
 
   private updateMercFirstPerson(dtSeconds: number): void {
-    // 1. Forward and right vectors relative to first-person yaw (rotationY)
-    const sinY = Math.sin(this.rotationY);
-    const cosY = Math.cos(this.rotationY);
-    this.forwardScratch.set(sinY, 0, cosY);
-    this.rightScratch.set(cosY, 0, -sinY);
-
-    // 2. Accumulate WASD movement input
-    this.moveDirScratch.set(0, 0, 0);
-    if (this.keys['KeyW'] || this.keys['ArrowUp']) {
-      this.moveDirScratch.addInPlace(this.forwardScratch);
-    }
-    if (this.keys['KeyS'] || this.keys['ArrowDown']) {
-      this.moveDirScratch.subtractInPlace(this.forwardScratch);
-    }
-    if (this.keys['KeyD'] || this.keys['ArrowRight']) {
-      this.moveDirScratch.addInPlace(this.rightScratch);
-    }
-    if (this.keys['KeyA'] || this.keys['ArrowLeft']) {
-      this.moveDirScratch.subtractInPlace(this.rightScratch);
-    }
-
-    this.currentAnim = this.visual.getCurrentAnimation();
-    const canAimOrFire =
-      this.currentAnim !== 'Reload' &&
-      this.currentAnim !== 'Draw' &&
-      this.currentAnim !== 'Hide' &&
-      this.currentAnim !== 'Hidden';
-
-    const wantsAds = canAimOrFire && (this.isAdsHeld || this.isAdsToggled);
-    const isCrouching = Boolean(
-      this.keys['ControlLeft'] || this.keys['ControlRight'] || this.keys['KeyC']
-    );
-    const isSprinting =
-      !isCrouching &&
-      !wantsAds &&
-      Boolean(this.keys['ShiftLeft'] || this.keys['ShiftRight']);
-
-    const moveSpeed = isCrouching
-      ? CROUCH_SPEED
-      : wantsAds
-        ? ADS_WALK_SPEED
-        : isSprinting
-          ? RUN_SPEED
-          : WALK_SPEED;
-    const isMovingHorizontally = this.moveDirScratch.lengthSquared() > 0.0001;
-
-    const currentVel = this.body.linvel();
-    let vx = 0;
-    let vz = 0;
-
-    if (isMovingHorizontally) {
-      this.moveDirScratch.normalize();
-      vx = this.moveDirScratch.x * moveSpeed;
-      vz = this.moveDirScratch.z * moveSpeed;
-    }
-
-    this.body.setLinvel({ x: vx, y: currentVel.y, z: vz }, true);
-
-    // 3. Spacebar Jump & Landing detection (disabled when crouched or in the air)
-    let grounded = isPlayerGrounded(this.world, this.body);
-    if (this.jumpRequested) {
-      if (grounded && !isCrouching) {
-        this.body.applyImpulse({ x: 0, y: JUMP_IMPULSE, z: 0 }, true);
-        this.jumpedThisFrame = true;
-        grounded = false;
-        this.viewmodelMotion.jumpLagY = -0.016;
-        this.viewmodelMotion.jumpPitchX = 0.022;
-      }
-      this.jumpRequested = false;
-    }
-
-    if (!this.wasGrounded && grounded) {
-      this.viewmodelMotion.landSpringVelY = -0.18;
-    }
-    this.wasGrounded = grounded;
-
-    // Safety respawn if player falls off the map
-    const pos = this.body.translation();
-    if (pos.y < -15) {
-      this.setSpawnPosition(0, 3, 0, this.rotationY);
-      return;
-    }
-
-    // Sync collision root
-    this.mesh.position.set(pos.x, pos.y, pos.z);
-    this.mesh.rotation.y = this.rotationY;
-
-    // 4. Procedural ADS transition (~150ms), Camera FOV zoom, and Crosshair fade
-    this.viewmodelMotion.updateAds(wantsAds, dtSeconds);
-
-    // 5. Procedural Crouching & Camera Recoil Spring Recovery
-    this.viewmodelMotion.updateCameraAndCrouch(
-      isCrouching,
-      pos,
-      this.pitchX,
-      this.rotationY,
-      this.fpCamera,
+    const res = updateMercFirstPerson(
+      {
+        body: this.body,
+        mesh: this.mesh,
+        fpCamera: this.fpCamera,
+        viewmodelRig: this.viewmodelRig,
+        visual: this.visual,
+        world: this.world,
+        viewmodelMotion: this.viewmodelMotion,
+        weaponController: this.weaponController,
+        keys: this.keys,
+        rotationY: this.rotationY,
+        pitchX: this.pitchX,
+        jumpRequested: this.jumpRequested,
+        isFiringHeld: this.isFiringHeld,
+        isAdsHeld: this.isAdsHeld,
+        isAdsToggled: this.isAdsToggled,
+        lookDeltaX: this.lookDeltaX,
+        lookDeltaY: this.lookDeltaY,
+        wasGrounded: this.wasGrounded,
+        forwardScratch: this.forwardScratch,
+        rightScratch: this.rightScratch,
+        moveDirScratch: this.moveDirScratch,
+        onSetSpawnPosition: (x, y, z, rotY) =>
+          this.setSpawnPosition(x, y, z, rotY),
+        onFireSingleRound: () => this.fireSingleRound(),
+        onJumpConsumed: () => {
+          this.jumpedThisFrame = true;
+          this.jumpRequested = false;
+        },
+        onDecayLookDeltas: (decay) => {
+          this.lookDeltaX *= 1.0 - decay;
+          this.lookDeltaY *= 1.0 - decay;
+        },
+      },
       dtSeconds
     );
-
-    // 6. Automatic Firing Logic (100ms cooldown, blocked during Reload/Draw/Empty)
-    this.weaponController.updateCooldown(dtSeconds);
-    if (
-      this.isFiringHeld &&
-      canAimOrFire &&
-      this.weaponController.currentMagazineRounds > 0 &&
-      this.weaponController.fireCooldown <= 0
-    ) {
-      this.fireSingleRound();
-      this.weaponController.fireCooldown = FIRE_INTERVAL_SECONDS;
-    }
-
-    // 7. Viewmodel Recoil Spring Recovery
-    this.viewmodelMotion.updateRecoilSprings(dtSeconds);
-
-    // 8. Procedural Movement Feel + ADS + Recoil on Viewmodel Rig
-    this.viewmodelMotion.updateViewmodelRig({
-      dtSeconds,
-      wantsAds,
-      isCrouching,
-      isSprinting,
-      isMovingHorizontally,
-      grounded,
-      velY: this.body.linvel().y,
-      lookDeltaX: this.lookDeltaX,
-      lookDeltaY: this.lookDeltaY,
-      currentAnim: this.currentAnim,
-      pos,
-      pitchX: this.pitchX,
-      rotationY: this.rotationY,
-      fpCamera: this.fpCamera,
-      viewmodelRig: this.viewmodelRig,
-    });
-
-    const deltaDecay = Math.min(1.0, dtSeconds * 28.0);
-    this.lookDeltaX *= 1.0 - deltaDecay;
-    this.lookDeltaY *= 1.0 - deltaDecay;
+    this.wasGrounded = res.wasGrounded;
+    this.currentAnim = res.currentAnim;
   }
 
   private toggleSpieCrouch(): void {
-    if (this.isClimbing) return;
-    this.isCrouchToggled = !this.isCrouchToggled;
-    const isMoveKeyHeld = Boolean(
-      this.keys['KeyW'] ||
-        this.keys['KeyS'] ||
-        this.keys['KeyA'] ||
-        this.keys['KeyD'] ||
-        this.keys['ArrowUp'] ||
-        this.keys['ArrowDown'] ||
-        this.keys['ArrowLeft'] ||
-        this.keys['ArrowRight']
-    );
-    if (this.isCrouchToggled) {
-      if (isMoveKeyHeld) {
-        this.visual.playAnimation('crouched-walking');
-      } else {
-        this.visual.playAnimation('stand-to-crouch');
+    toggleSpieCrouch(
+      this.parkourController.isClimbing,
+      this.isCrouchToggled,
+      this.keys,
+      this.visual,
+      (isCrouched) => {
+        this.isCrouchToggled = isCrouched;
       }
-    } else {
-      if (isMoveKeyHeld) {
-        this.visual.playAnimation('walking');
-      } else {
-        this.visual.playAnimation('crouch-to-stand');
-      }
-    }
-  }
-
-  private checkClimbableLedge(): LedgeInfo | null {
-    return this.parkourController.checkClimbableLedge(
-      this.world,
-      this.body,
-      this.rotationY
     );
-  }
-
-  private startLedgeClimb(ledge: LedgeInfo): void {
-    this.parkourController.startLedgeClimb({
-      ledge,
-      body: this.body,
-      visual: this.visual,
-      onOrientToWall: (wallRotY) => {
-        this.rotationY = wallRotY;
-        this.targetRotationY = wallRotY;
-      },
-    });
   }
 
   private updateSpieThirdPerson(
     camera: ArcRotateCamera | null,
     dtSeconds: number
   ): void {
-    const alpha = camera ? camera.alpha : -Math.PI / 2;
-    this.forwardScratch.set(-Math.cos(alpha), 0, -Math.sin(alpha));
-    this.forwardScratch.normalize();
-
-    Vector3.CrossToRef(
-      Vector3.UpReadOnly,
-      this.forwardScratch,
-      this.rightScratch
-    );
-    this.rightScratch.normalize();
-
-    // 1. Dynamic Ledge Climb Update
-    if (this.parkourController.isClimbing) {
-      this.parkourController.updateClimbing({
-        dtSeconds,
+    this.currentAnim = updateSpieThirdPerson(
+      {
         body: this.body,
         mesh: this.mesh,
-        rotationY: this.rotationY,
         visual: this.visual,
-        moveDir: this.moveDirScratch,
-        camForward: this.forwardScratch,
-        camRight: this.rightScratch,
-        camAlpha: alpha,
-        onClimbFinished: () => {
-          this.isCrouchToggled = true;
+        world: this.world,
+        parkourController: this.parkourController,
+        keys: this.keys,
+        rotationY: this.rotationY,
+        targetRotationY: this.targetRotationY,
+        jumpRequested: this.jumpRequested,
+        isRightClickHeld: this.isRightClickHeld,
+        isCrouchToggled: this.isCrouchToggled,
+        forwardScratch: this.forwardScratch,
+        rightScratch: this.rightScratch,
+        moveDirScratch: this.moveDirScratch,
+        onSetSpawnPosition: (x, y, z, rotY) =>
+          this.setSpawnPosition(x, y, z, rotY),
+        onOrientCharacter: (rotY, targetRotY) => {
+          this.rotationY = rotY;
+          this.targetRotationY = targetRotY;
         },
-      });
-      this.currentAnim = this.visual.getCurrentAnimation();
-      return;
-    }
-
-    // 2. Normal Locomotion Input
-    this.moveDirScratch.set(0, 0, 0);
-    if (this.keys['KeyW'] || this.keys['ArrowUp']) {
-      this.moveDirScratch.addInPlace(this.forwardScratch);
-    }
-    if (this.keys['KeyS'] || this.keys['ArrowDown']) {
-      this.moveDirScratch.subtractInPlace(this.forwardScratch);
-    }
-    if (this.keys['KeyD'] || this.keys['ArrowRight']) {
-      this.moveDirScratch.addInPlace(this.rightScratch);
-    }
-    if (this.keys['KeyA'] || this.keys['ArrowLeft']) {
-      this.moveDirScratch.subtractInPlace(this.rightScratch);
-    }
-
-    const isCrouched = this.isCrouchToggled;
-    const isSprinting =
-      !isCrouched &&
-      Boolean(this.keys['ShiftLeft'] || this.keys['ShiftRight']);
-    const moveSpeed = isCrouched
-      ? CROUCH_SPEED
-      : isSprinting
-        ? RUN_SPEED
-        : WALK_SPEED;
-    const isMovingHorizontally = this.moveDirScratch.lengthSquared() > 0.0001;
-
-    const currentVel = this.body.linvel();
-    let vx = 0;
-    let vz = 0;
-
-    if (isMovingHorizontally) {
-      this.moveDirScratch.normalize();
-      vx = this.moveDirScratch.x * moveSpeed;
-      vz = this.moveDirScratch.z * moveSpeed;
-    }
-
-    this.body.setLinvel({ x: vx, y: currentVel.y, z: vz }, true);
-
-    let grounded = isPlayerGrounded(this.world, this.body);
-    if (this.jumpRequested) {
-      this.jumpRequested = false;
-      // Disable jumping when the player is crouched or in the air:
-      // Must be on the ground and standing (cannot jump or mantle while in mid-air or crouched)
-      if (grounded && !isCrouched) {
-        const ledge = this.checkClimbableLedge();
-        if (ledge) {
-          this.startLedgeClimb(ledge);
-          return;
-        } else {
-          this.body.applyImpulse({ x: 0, y: JUMP_IMPULSE, z: 0 }, true);
+        onJumpConsumed: () => {
+          this.jumpRequested = false;
           this.jumpedThisFrame = true;
-          grounded = false;
-          this.visual.playAnimation('jump');
-        }
-      }
-    }
-
-    // Character rotation & heading
-    const camAngle = Math.atan2(this.forwardScratch.x, this.forwardScratch.z);
-    if (this.isRightClickHeld) {
-      // In strafing mode (holding RMB): character locks facing towards camera look direction
-      this.targetRotationY = camAngle;
-      this.rotationY = lerpAngleY(
-        this.rotationY,
-        this.targetRotationY,
-        dtSeconds * 20.0
-      );
-    } else if (isMovingHorizontally) {
-      // In normal movement: character faces movement direction (which follows camera facing)
-      this.targetRotationY = Math.atan2(
-        this.moveDirScratch.x,
-        this.moveDirScratch.z
-      );
-      this.rotationY = lerpAngleY(
-        this.rotationY,
-        this.targetRotationY,
-        dtSeconds * TURN_SMOOTH_SPEED
-      );
-    }
-    // When stationary: do not follow camera when orbiting; preserve character orientation
-
-    // Update animations via the weighted blend state machine
-    this.visual.updateAnimation?.(dtSeconds, {
-      isMoving: isMovingHorizontally,
-      isStrafing: this.isRightClickHeld,
-      moveDir: this.moveDirScratch,
-      camForward: this.forwardScratch,
-      camRight: this.rightScratch,
-      camAlpha: alpha,
-      rotationY: this.rotationY,
-      isCrouched: this.isCrouchToggled,
-      isClimbing: false,
-      isGrounded: grounded,
-    });
-
-    this.currentAnim = this.visual.getCurrentAnimation();
-
-    const pos = this.body.translation();
-    if (pos.y < -15) {
-      this.setSpawnPosition(0, 3, 0, 0);
-      return;
-    }
-
-    this.mesh.position.set(pos.x, pos.y, pos.z);
-    this.mesh.rotation.y = this.rotationY;
+        },
+        onCrouchChanged: (isCrouched) => {
+          this.isCrouchToggled = isCrouched;
+        },
+      },
+      camera,
+      dtSeconds
+    );
   }
 }
