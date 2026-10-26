@@ -19,10 +19,9 @@ import {
   setAmmoHudVisible,
   setHealthHudVisible,
   updateAmmoHud as uiUpdateAmmoHud,
-  updateHealthHud as uiUpdateHealthHud,
-  triggerDamageFlash as uiTriggerDamageFlash,
 } from './ui';
 import { normalizeAngle, lerpAngleY } from './utils/math';
+import { HealthController } from './player/systems/HealthController';
 
 export { normalizeAngle, lerpAngleY };
 
@@ -95,10 +94,29 @@ export class LocalPlayer {
   public rotationY = 0;
   public currentAnim = 'Idle';
 
-  public currentHp = 100;
-  public readonly maxHp = 100;
-  public isDead = false;
-  public onDeath?: () => void;
+  private readonly healthController = new HealthController();
+
+  public get currentHp(): number {
+    return this.healthController.currentHp;
+  }
+  public set currentHp(val: number) {
+    this.healthController.currentHp = val;
+  }
+  public get maxHp(): number {
+    return this.healthController.maxHp;
+  }
+  public get isDead(): boolean {
+    return this.healthController.isDead;
+  }
+  public set isDead(val: boolean) {
+    this.healthController.isDead = val;
+  }
+  public get onDeath(): (() => void) | undefined {
+    return this.healthController.onDeath;
+  }
+  public set onDeath(val: (() => void) | undefined) {
+    this.healthController.onDeath = val;
+  }
 
   private readonly scene: Scene;
 
@@ -265,68 +283,43 @@ export class LocalPlayer {
    * - Limbs (Arms / Legs): 10 HP
    */
   public takeDamage(amount: number, zone = 'torso'): void {
-    if (this.isDead) return;
-
-    this.currentHp = Math.max(0, this.currentHp - amount);
-    this.updateHealthHud();
-    this.triggerDamageFlash();
-
-    console.log(
-      `[Health] Took ${amount} damage (${zone}). Remaining HP: ${this.currentHp}/100`
-    );
-
-    if (this.currentHp <= 0) {
-      this.handleDeath();
-    }
+    this.healthController.takeDamage(amount, zone, () => this.handleDeathInternal());
   }
 
   public classifyHitZone(hitPoint: Vector3): 'head' | 'torso' | 'limbs' {
-    if (this.visual.getHitZone) {
-      return this.visual.getHitZone(hitPoint);
-    }
-    const feetY = this.mesh.position.y - PLAYER_HALF_HEIGHT;
-    const relY = hitPoint.y - feetY;
-    if (relY >= 1.42) return 'head';
-    if (relY >= 0.82) {
-      const dx = hitPoint.x - this.mesh.position.x;
-      const dz = hitPoint.z - this.mesh.position.z;
-      if (Math.hypot(dx, dz) <= 0.22) return 'torso';
-    }
-    return 'limbs';
+    return this.healthController.classifyHitZone(
+      hitPoint,
+      this.visual,
+      this.mesh.position
+    );
   }
 
   public updateHealthHud(): void {
-    uiUpdateHealthHud(this.currentHp, this.maxHp);
+    this.healthController.updateHealthHud();
   }
 
-  private triggerDamageFlash(): void {
-    uiTriggerDamageFlash();
+  public triggerDamageFlash(): void {
+    this.healthController.triggerDamageFlash();
   }
 
-  private handleDeath(): void {
-    if (this.isDead) return;
-    this.isDead = true;
-
+  private handleDeathInternal(): void {
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.isCrouchToggled = false;
     this.isClimbing = false;
     for (const k of Object.keys(this.keys)) {
       this.keys[k] = false;
     }
+  }
 
-    if (document.pointerLockElement) {
-      document.exitPointerLock?.();
-    }
-
-    this.onDeath?.();
+  public handleDeath(): void {
+    this.healthController.handleDeath(() => this.handleDeathInternal());
   }
 
   public respawn(
     selectedType: CharacterType,
     arcCamera?: ArcRotateCamera | null
   ): void {
-    this.currentHp = 100;
-    this.isDead = false;
+    this.healthController.reset();
     this.isCrouchToggled = false;
     this.isClimbing = false;
     for (const k of Object.keys(this.keys)) {
