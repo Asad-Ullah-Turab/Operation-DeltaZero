@@ -23,7 +23,7 @@ import type {
   CharacterVisual,
 } from './types';
 import { createMercVisual } from './visuals/merc';
-import { createSpieVisual } from './visuals/spie';
+import { createSpieVisual } from './visuals/spy';
 import type { HealthController, WeaponController } from './systems';
 
 export interface LocalCharacterSetup {

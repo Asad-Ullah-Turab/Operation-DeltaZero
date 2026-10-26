@@ -18,6 +18,6 @@ export {
   loadCharacterAssets,
 } from './assets';
 
-export { createSpieVisual } from './visuals/spie';
+export { createSpieVisual } from './visuals/spy';
 export { createMercVisual, createMercWorldVisual } from './visuals/merc';
 export * from './systems';

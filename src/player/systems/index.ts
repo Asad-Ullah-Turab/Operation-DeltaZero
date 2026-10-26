@@ -12,5 +12,5 @@ export {
   updateSpieThirdPerson,
   toggleSpieCrouch,
   type SpieMovementContext,
-} from './SpieMovement';
+} from './SpyMovement';
 

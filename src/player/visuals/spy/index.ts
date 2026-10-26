@@ -6,5 +6,5 @@ export * from './animNames';
 export * from './rootMotion';
 export * from './hitboxes';
 export * from './tracks';
-export * from './createSpieVisual';
+export * from './createSpyVisual';
 
