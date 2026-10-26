@@ -7,7 +7,7 @@ import {
   CharacterType,
   CharacterVisual,
   createSpieVisual,
-  createMercVisual,
+  createMercWorldVisual,
   lerpAngleY,
 } from './player';
 import { CombatEffectsManager } from './combat';
@@ -109,11 +109,10 @@ export class NetworkManager {
     characterType: CharacterType
   ): CharacterVisual {
     if (characterType === 'Merc') {
-      return createMercVisual(
+      return createMercWorldVisual(
         `remote_merc_${sessionId}`,
         this.scene,
-        this.assets.mercContainer,
-        false
+        this.assets.mercenaryContainer
       );
     }
     return createSpieVisual(

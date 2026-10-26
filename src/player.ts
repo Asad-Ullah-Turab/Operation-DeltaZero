@@ -24,6 +24,7 @@ export type CharacterType = 'Spie' | 'Merc';
 export interface CharacterAssets {
   spieContainer: AssetContainer;
   mercContainer: AssetContainer;
+  mercenaryContainer: AssetContainer;
 }
 
 export interface NetworkShotEvent {
@@ -85,6 +86,9 @@ export interface SpieAnimContext {
   camRight: Vector3;
   camAlpha: number;
   rotationY: number;
+  isCrouched?: boolean;
+  isClimbing?: boolean;
+  isGrounded?: boolean;
 }
 
 export interface CharacterVisual {
@@ -161,13 +165,13 @@ function normalizeMercContainerGeometry(container: AssetContainer): void {
 }
 
 /**
- * Preloads both `spy.glb` (Spie) and `fps_merc_m4a1.glb` (Merc) into
- * reusable Babylon AssetContainers.
+ * Preloads `spy.glb` (Spie), `fps_merc_m4a1.glb` (FPS Merc viewmodel),
+ * and `mercenary.glb` (third-person Merc world model) into reusable Babylon AssetContainers.
  */
 export async function loadCharacterAssets(
   scene: Scene
 ): Promise<CharacterAssets> {
-  const [spieContainer, mercContainer] = await Promise.all([
+  const [spieContainer, mercContainer, mercenaryContainer] = await Promise.all([
     SceneLoader.LoadAssetContainerAsync(
       './assets/characters/',
       'spy.glb',
@@ -178,11 +182,16 @@ export async function loadCharacterAssets(
       'fps_merc_m4a1.glb',
       scene
     ),
+    SceneLoader.LoadAssetContainerAsync(
+      './assets/characters/',
+      'mercenary.glb',
+      scene
+    ),
   ]);
 
   normalizeMercContainerGeometry(mercContainer);
 
-  return { spieContainer, mercContainer };
+  return { spieContainer, mercContainer, mercenaryContainer };
 }
 
 /**
@@ -242,7 +251,13 @@ export type SpieAnimationName =
   | 'left-turn'
   | 'right-turn'
   | 'left-strafe-walking'
-  | 'right-strafe-walking';
+  | 'right-strafe-walking'
+  | 'crouch-idle'
+  | 'crouched-walking'
+  | 'stand-to-crouch'
+  | 'crouch-to-stand'
+  | 'jump'
+  | 'hang-to-crouch';
 
 interface SpieTrack {
   name: SpieAnimationName;
@@ -268,6 +283,12 @@ const SPIE_TRACK_CONFIGS: Array<{
   { name: 'walking-turn-180', isLooping: false, speedRatio: 1.5 },
   { name: 'left-turn', isLooping: false, speedRatio: 1.4 },
   { name: 'right-turn', isLooping: false, speedRatio: 1.4 },
+  { name: 'crouch-idle', isLooping: true, speedRatio: 1.0 },
+  { name: 'crouched-walking', isLooping: true, speedRatio: 1.25 },
+  { name: 'stand-to-crouch', isLooping: false, speedRatio: 1.2 },
+  { name: 'crouch-to-stand', isLooping: false, speedRatio: 1.2 },
+  { name: 'jump', isLooping: false, speedRatio: 1.15 },
+  { name: 'hang-to-crouch', isLooping: false, speedRatio: 1.0 },
 ];
 
 function resolveSpieAnimName(rawName: string): SpieAnimationName | null {
@@ -306,6 +327,40 @@ function resolveSpieAnimName(rawName: string): SpieAnimationName | null {
     lower === 'strafe-right'
   ) {
     return 'right-strafe-walking';
+  }
+  if (lower === 'crouch-idle' || lower === 'crouch_idle' || lower === 'crouch') {
+    return 'crouch-idle';
+  }
+  if (
+    lower === 'crouched-walking' ||
+    lower === 'crouched_walking' ||
+    lower === 'crouch-walking' ||
+    lower === 'crouch_walk'
+  ) {
+    return 'crouched-walking';
+  }
+  if (
+    lower === 'stand-to-crouch' ||
+    lower === 'stand_to_crouch' ||
+    lower === 'standtocrouch'
+  ) {
+    return 'stand-to-crouch';
+  }
+  if (
+    lower === 'crouch-to-stand' ||
+    lower === 'crouch_to_stand' ||
+    lower === 'crouchtostand'
+  ) {
+    return 'crouch-to-stand';
+  }
+  if (lower === 'jump') return 'jump';
+  if (
+    lower === 'hang-to-crouch' ||
+    lower === 'hang_to_crouch' ||
+    lower === 'hangtocrouch' ||
+    lower === 'climb'
+  ) {
+    return 'hang-to-crouch';
   }
   return null;
 }
@@ -352,14 +407,16 @@ export function createSpieVisual(
     ag.stop();
   }
 
-  // Strip root-motion translation displacement only from tracks that exhibit it
-  // (such as 180 turn or legacy start/stop) so in-place locomotion and natural
-  // hip sway in cyclic tracks (walking, strafing, idle) are preserved.
+  // Strip or neutralize root-motion translation displacement where appropriate:
+  // - Neutralize in-place tracks (180 turn, start/stop, jump) to lock to collider center
+  // - Interpolate horizontal drift in stand-to-crouch and crouch-to-stand for seamless transitions
+  // - Smoothly blend hang-to-crouch hip position towards crouch-idle
   for (const ag of instantiated.animationGroups) {
     if (
       ag.name.includes('walking-turn-180') ||
       ag.name.includes('start-walking') ||
-      ag.name.includes('stop-walking')
+      ag.name.includes('stop-walking') ||
+      ag.name.includes('jump')
     ) {
       for (const ta of ag.targetedAnimations) {
         if (
@@ -376,6 +433,85 @@ export function createSpieVisual(
                 k.value.copyFrom(firstVal);
               }
             }
+          }
+        }
+      }
+    } else if (ag.name.includes('stand-to-crouch')) {
+      for (const ta of ag.targetedAnimations) {
+        if (
+          ta.target &&
+          typeof ta.target.name === 'string' &&
+          ta.target.name.toLowerCase().includes('hips') &&
+          ta.animation.targetProperty === 'position'
+        ) {
+          const keys = ta.animation.getKeys();
+          const n = keys.length;
+          if (n > 1) {
+            const startX = keys[0].value.x;
+            const startY = keys[0].value.y;
+            const targetX = 17.41;
+            const targetY = -4.47;
+            for (let i = 0; i < n; i++) {
+              const alpha = i / (n - 1);
+              keys[i].value.x = startX + (targetX - startX) * alpha;
+              keys[i].value.y = startY + (targetY - startY) * alpha;
+            }
+          }
+        }
+      }
+    } else if (ag.name.includes('crouch-to-stand')) {
+      for (const ta of ag.targetedAnimations) {
+        if (
+          ta.target &&
+          typeof ta.target.name === 'string' &&
+          ta.target.name.toLowerCase().includes('hips') &&
+          ta.animation.targetProperty === 'position'
+        ) {
+          const keys = ta.animation.getKeys();
+          const n = keys.length;
+          if (n > 1) {
+            const startX = 17.41;
+            const startY = -4.47;
+            const targetX = 5.1;
+            const targetY = -1.5;
+            for (let i = 0; i < n; i++) {
+              const alpha = i / (n - 1);
+              keys[i].value.x = startX + (targetX - startX) * alpha;
+              keys[i].value.y = startY + (targetY - startY) * alpha;
+            }
+          }
+        }
+      }
+    } else if (ag.name.includes('hang-to-crouch')) {
+      for (const ta of ag.targetedAnimations) {
+        if (
+          ta.target &&
+          typeof ta.target.name === 'string' &&
+          ta.target.name.toLowerCase().includes('hips') &&
+          ta.animation.targetProperty === 'position'
+        ) {
+          const keys = ta.animation.getKeys();
+          const n = keys.length;
+          const boneFactor = scale * 0.01;
+          const palmDeltas = [
+            0, 0, -0.0004, 0.0042, 0.0132, 0.0254, 0.0393, 0.0531, 0.0654, 0.0748,
+            0.0841, 0.095, 0.1057, 0.1135, 0.1168, 0.1142, 0.1001, 0.0834, 0.0701, 0.0642,
+            0.0634, 0.0681, 0.074, 0.0808, 0.0888, 0.1022, 0.1193, 0.1392, 0.1592, 0.1781,
+            0.1882, 0.1834, 0.1802, 0.1751, 0.1707, 0.1691
+          ];
+
+          // 1. Cancel palm rise during pull-up (frames 0 to 35) so hands stay 100% glued to ledge
+          for (let i = 0; i < Math.min(n, palmDeltas.length); i++) {
+            keys[i].value.z += palmDeltas[i] / boneFactor;
+          }
+
+          // 2. From frame 35 to end, smoothly interpolate hips to crouch-idle pose, eliminating speed bump
+          const keyAt35 = keys[Math.min(35, n - 1)].value.clone();
+          const targetCrouchIdleHips = new Vector3(17.41, -4.47, -71.06);
+          for (let i = 36; i < n; i++) {
+            const t = (i - 35) / (n - 1 - 35);
+            const smoothT = t * t * (3 - 2 * t);
+            keys[i].value = Vector3.Lerp(keyAt35, targetCrouchIdleHips, smoothT);
           }
         }
       }
@@ -448,12 +584,13 @@ export function createSpieVisual(
         if (isSingle) {
           singleShotElapsed = 0;
           singleShotDuration = track.durationSec;
+          track.currentWeight = 1.0;
           track.group.reset();
           track.group.start(false, track.speedRatio);
         } else {
           // If starting locomotion from stationary idle or switching strafe direction,
           // grant immediate authority so the legs pedal instantly without lag or sliding
-          if (oldState === 'idle') {
+          if (oldState === 'idle' || oldState === 'crouch-idle') {
             track.currentWeight = Math.max(track.currentWeight, 0.55);
           } else if (
             (name === 'left-strafe-walking' &&
@@ -483,7 +620,78 @@ export function createSpieVisual(
     if (isSingleShot) {
       singleShotElapsed += dtSeconds;
 
-      if (currentState === 'walking-turn-180') {
+      if (currentState === 'stand-to-crouch') {
+        if (context.isMoving) {
+          setTarget('crouched-walking');
+        } else if (singleShotElapsed >= singleShotDuration * 0.75) {
+          const crouchIdleTrack = tracks.get('crouch-idle');
+          const s2cTrack = tracks.get('stand-to-crouch');
+          if (crouchIdleTrack && s2cTrack) {
+            crouchIdleTrack.targetWeight = 1.0;
+            s2cTrack.targetWeight = 0.0;
+            if (!crouchIdleTrack.group.isPlaying) {
+              crouchIdleTrack.group.reset();
+              crouchIdleTrack.group.start(true, crouchIdleTrack.speedRatio);
+            }
+          }
+          if (singleShotElapsed >= singleShotDuration) {
+            isSingleShot = false;
+            currentState = 'crouch-idle';
+          }
+        }
+      } else if (currentState === 'crouch-to-stand') {
+        if (context.isMoving) {
+          setTarget('walking');
+        } else if (singleShotElapsed >= singleShotDuration * 0.75) {
+          const idleTrack = tracks.get('idle');
+          const c2sTrack = tracks.get('crouch-to-stand');
+          if (idleTrack && c2sTrack) {
+            idleTrack.targetWeight = 1.0;
+            c2sTrack.targetWeight = 0.0;
+            if (!idleTrack.group.isPlaying) {
+              idleTrack.group.reset();
+              idleTrack.group.start(true, idleTrack.speedRatio);
+            }
+          }
+          if (singleShotElapsed >= singleShotDuration) {
+            isSingleShot = false;
+            currentState = 'idle';
+          }
+        }
+      } else if (currentState === 'hang-to-crouch') {
+        if (singleShotElapsed >= singleShotDuration * 0.85) {
+          const crouchIdleTrack = tracks.get('crouch-idle');
+          const hangTrack = tracks.get('hang-to-crouch');
+          if (crouchIdleTrack && hangTrack) {
+            crouchIdleTrack.targetWeight = 1.0;
+            hangTrack.targetWeight = 0.0;
+            if (!crouchIdleTrack.group.isPlaying) {
+              crouchIdleTrack.group.reset();
+              crouchIdleTrack.group.start(true, crouchIdleTrack.speedRatio);
+            }
+          }
+          if (singleShotElapsed >= singleShotDuration) {
+            isSingleShot = false;
+            currentState = 'crouch-idle';
+          }
+        }
+      } else if (currentState === 'jump') {
+        if (context.isGrounded && singleShotElapsed >= 0.25) {
+          isSingleShot = false;
+          if (context.isCrouched) {
+            setTarget(context.isMoving ? 'crouched-walking' : 'crouch-idle');
+          } else {
+            setTarget(context.isMoving ? 'walking' : 'idle');
+          }
+        } else if (singleShotElapsed >= singleShotDuration) {
+          isSingleShot = false;
+          if (context.isCrouched) {
+            setTarget(context.isMoving ? 'crouched-walking' : 'crouch-idle');
+          } else {
+            setTarget(context.isMoving ? 'walking' : 'idle');
+          }
+        }
+      } else if (currentState === 'walking-turn-180') {
         if (!context.isMoving) {
           setTarget('idle');
         } else if (singleShotElapsed >= singleShotDuration * 0.65) {
@@ -525,7 +733,22 @@ export function createSpieVisual(
     }
 
     // 2. State selection
-    if (context.isStrafing) {
+    if (context.isClimbing) {
+      if (currentState !== 'hang-to-crouch') {
+        setTarget('hang-to-crouch', true);
+      }
+    } else if (context.isCrouched) {
+      // Crouch mode locomotion
+      if (context.isMoving) {
+        if (currentState !== 'crouched-walking') {
+          setTarget('crouched-walking');
+        }
+      } else {
+        if (currentState !== 'crouch-idle') {
+          setTarget('crouch-idle');
+        }
+      }
+    } else if (context.isStrafing) {
       if (isSingleShot) isSingleShot = false;
       if (context.isMoving) {
         const lateral = Vector3.Dot(context.moveDir, context.camRight);
@@ -627,7 +850,11 @@ export function createSpieVisual(
       resolved === 'stop-walking' ||
       resolved === 'walking-turn-180' ||
       resolved === 'left-turn' ||
-      resolved === 'right-turn';
+      resolved === 'right-turn' ||
+      resolved === 'stand-to-crouch' ||
+      resolved === 'crouch-to-stand' ||
+      resolved === 'jump' ||
+      resolved === 'hang-to-crouch';
     setTarget(resolved, isSingle);
   };
 
@@ -937,6 +1164,82 @@ export function createMercVisual(
 }
 
 /**
+ * Instantiates the third-person `mercenary.glb` full-body character model
+ * representing other Mercenary players connected to the multiplayer server.
+ */
+export function createMercWorldVisual(
+  name: string,
+  scene: Scene,
+  container: AssetContainer
+): CharacterVisual {
+  const root = new Mesh(name, scene);
+
+  const instantiated = container.instantiateModelsToScene(
+    (sourceName) => sourceName,
+    false,
+    { doNotInstantiate: true }
+  );
+
+  const { height, baseY } = computeModelHeightAndBaseY(container);
+  const targetHeight = 1.76;
+  const scale = targetHeight / height;
+
+  for (const node of instantiated.rootNodes) {
+    node.parent = root;
+    if (node instanceof TransformNode) {
+      node.position.set(0, -PLAYER_HALF_HEIGHT - baseY * scale, 0);
+      node.scaling.x *= scale;
+      node.scaling.y *= scale;
+      node.scaling.z *= scale;
+    }
+  }
+
+  for (const childMesh of root.getChildMeshes()) {
+    childMesh.isPickable = false;
+    if (childMesh.material) {
+      childMesh.material.backFaceCulling = false;
+    }
+  }
+
+  // Muzzle attachment node and flash for remote weapon firing
+  const muzzleNode = new TransformNode(`${name}_muzzle`, scene);
+  muzzleNode.parent = root;
+  muzzleNode.position.set(0.22, 0.35, 0.6);
+
+  const muzzleFlashMesh = createMuzzleFlashMesh(
+    `${name}_muzzle_flash`,
+    scene,
+    muzzleNode,
+    1.35
+  );
+
+  let currentAnim = 'idle';
+  const playAnimation = (animName: string): void => {
+    currentAnim = animName;
+  };
+
+  const dispose = (): void => {
+    for (const ag of instantiated.animationGroups) {
+      ag.dispose();
+    }
+    for (const skel of (instantiated.skeletons ?? []) as Skeleton[]) {
+      skel?.dispose();
+    }
+    root.dispose(false, true);
+  };
+
+  return {
+    root,
+    characterType: 'Merc',
+    muzzleNode,
+    muzzleFlashMesh,
+    playAnimation,
+    getCurrentAnimation: () => currentAnim,
+    dispose,
+  };
+}
+
+/**
  * Shortest-angle interpolation on [-PI, PI] for smooth character turning.
  */
 export function lerpAngleY(
@@ -970,6 +1273,14 @@ export class LocalPlayer {
   private readonly keys: Record<string, boolean> = {};
   private jumpRequested = false;
   private jumpedThisFrame = false;
+
+  // Spie third-person crouch & climbing state
+  private isCrouchToggled = false;
+  private isClimbing = false;
+  private climbElapsed = 0;
+  private climbDuration = 1.15;
+  private readonly climbStartPos = new Vector3();
+  private readonly climbTargetPos = new Vector3();
 
   // Magazine-based ammunition state (1 loaded magazine + 4 individual reserve magazines)
   private currentMagazineRounds = MAGAZINE_CAPACITY;
@@ -1175,6 +1486,12 @@ export class LocalPlayer {
 
       if (e.code === 'Space' && !e.repeat) {
         this.jumpRequested = true;
+      }
+
+      if (e.code === 'KeyC' && !e.repeat) {
+        if (this.characterType === 'Spie') {
+          this.toggleSpieCrouch();
+        }
       }
 
       if (this.characterType === 'Merc' && !e.repeat) {
@@ -1524,10 +1841,10 @@ export class LocalPlayer {
 
     this.body.setLinvel({ x: vx, y: currentVel.y, z: vz }, true);
 
-    // 3. Spacebar Jump & Landing detection
+    // 3. Spacebar Jump & Landing detection (disabled when crouched or in the air)
     let grounded = isPlayerGrounded(this.world, this.body);
     if (this.jumpRequested) {
-      if (grounded) {
+      if (grounded && !isCrouching) {
         this.body.applyImpulse({ x: 0, y: JUMP_IMPULSE, z: 0 }, true);
         this.jumpedThisFrame = true;
         grounded = false;
@@ -1744,6 +2061,190 @@ export class LocalPlayer {
     }
   }
 
+  private toggleSpieCrouch(): void {
+    if (this.isClimbing) return;
+    this.isCrouchToggled = !this.isCrouchToggled;
+    const isMoveKeyHeld = Boolean(
+      this.keys['KeyW'] ||
+        this.keys['KeyS'] ||
+        this.keys['KeyA'] ||
+        this.keys['KeyD'] ||
+        this.keys['ArrowUp'] ||
+        this.keys['ArrowDown'] ||
+        this.keys['ArrowLeft'] ||
+        this.keys['ArrowRight']
+    );
+    if (this.isCrouchToggled) {
+      if (isMoveKeyHeld) {
+        this.visual.playAnimation('crouched-walking');
+      } else {
+        this.visual.playAnimation('stand-to-crouch');
+      }
+    } else {
+      if (isMoveKeyHeld) {
+        this.visual.playAnimation('walking');
+      } else {
+        this.visual.playAnimation('crouch-to-stand');
+      }
+    }
+  }
+
+  private checkClimbableLedge(): {
+    ledgeTopY: number;
+    edgeX: number;
+    edgeZ: number;
+    facingDir: Vector3;
+  } | null {
+    const pos = this.body.translation();
+    const feetY = pos.y - PLAYER_HALF_HEIGHT;
+
+    // Facing direction vector of character
+    const facingDir = new Vector3(
+      Math.sin(this.rotationY),
+      0,
+      Math.cos(this.rotationY)
+    );
+    facingDir.normalize();
+
+    // 1. Cast forward horizontal rays at multiple heights to find obstacle front wall
+    const testHeights = [0.5, 1.0, 1.5, 2.0, 2.5];
+    let closestHitDist = Number.POSITIVE_INFINITY;
+    const maxForwardReach = 1.35; // Player radius 0.55m + ~0.8m arm reach
+
+    for (const h of testHeights) {
+      const rayOrigin = {
+        x: pos.x,
+        y: feetY + h,
+        z: pos.z,
+      };
+      const rayDir = {
+        x: facingDir.x,
+        y: 0,
+        z: facingDir.z,
+      };
+      const ray = new RAPIER.Ray(rayOrigin, rayDir);
+      const hit = this.world.castRay(
+        ray,
+        maxForwardReach,
+        true,
+        undefined,
+        undefined,
+        undefined,
+        this.body
+      );
+      if (hit !== null && hit.timeOfImpact < closestHitDist) {
+        closestHitDist = hit.timeOfImpact;
+      }
+    }
+
+    if (!Number.isFinite(closestHitDist) || closestHitDist > maxForwardReach) {
+      return null;
+    }
+
+    // Ledge edge coordinates in front of player
+    const edgeX = pos.x + facingDir.x * closestHitDist;
+    const edgeZ = pos.z + facingDir.z * closestHitDist;
+
+    // 2. Cast downward ray from above the max obstacle height (probe slightly past front edge)
+    const probeDist = closestHitDist + 0.25;
+    const probeX = pos.x + facingDir.x * probeDist;
+    const probeZ = pos.z + facingDir.z * probeDist;
+
+    const maxCheckY = feetY + 3.1;
+    const downRay = new RAPIER.Ray(
+      { x: probeX, y: maxCheckY, z: probeZ },
+      { x: 0, y: -1, z: 0 }
+    );
+    const downHit = this.world.castRay(
+      downRay,
+      2.7,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      this.body
+    );
+
+    if (downHit === null) {
+      return null;
+    }
+
+    const ledgeTopY = maxCheckY - downHit.timeOfImpact;
+    const climbHeight = ledgeTopY - feetY;
+
+    // Hang-to-crouch triggers exclusively for obstacles from waist height (~1.0m)
+    // up to 1.7x body size (~2.95m). For objects lower than waist height (e.g. curbs,
+    // low boxes < 1.0m), standard jump animation and impulse play instead.
+    const WAIST_HEIGHT = 1.0;
+    const MAX_CLIMB_HEIGHT = 2.95;
+    if (climbHeight < WAIST_HEIGHT || climbHeight > MAX_CLIMB_HEIGHT) {
+      return null;
+    }
+
+    // 3. Headroom clearance check: ensure no ceiling directly above the landing spot
+    const upRay = new RAPIER.Ray(
+      { x: probeX, y: ledgeTopY + 0.1, z: probeZ },
+      { x: 0, y: 1, z: 0 }
+    );
+    const upHit = this.world.castRay(
+      upRay,
+      1.6,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      this.body
+    );
+    if (upHit !== null) {
+      return null;
+    }
+
+    return {
+      ledgeTopY,
+      edgeX,
+      edgeZ,
+      facingDir,
+    };
+  }
+
+  private startLedgeClimb(ledge: {
+    ledgeTopY: number;
+    edgeX: number;
+    edgeZ: number;
+    facingDir: Vector3;
+  }): void {
+    this.isClimbing = true;
+    this.climbElapsed = 0;
+    this.climbDuration = 1.15;
+
+    // Compute hang start position:
+    // With offset 0.525m below ledgeTopY and 0.51m back from edge, the palms and fingers
+    // rest flush on top of the obstacle surface rather than floating slightly above it.
+    const hangStartX = ledge.edgeX - ledge.facingDir.x * 0.51;
+    const hangStartY = ledge.ledgeTopY - 0.525;
+    const hangStartZ = ledge.edgeZ - ledge.facingDir.z * 0.51;
+    this.climbStartPos.set(hangStartX, hangStartY, hangStartZ);
+
+    // Compute final landing position on top of the ledge
+    const targetX = ledge.edgeX + ledge.facingDir.x * 0.45;
+    const targetY = ledge.ledgeTopY + PLAYER_HALF_HEIGHT;
+    const targetZ = ledge.edgeZ + ledge.facingDir.z * 0.45;
+    this.climbTargetPos.set(targetX, targetY, targetZ);
+
+    // Orient character directly towards the wall
+    this.rotationY = Math.atan2(ledge.facingDir.x, ledge.facingDir.z);
+    this.targetRotationY = this.rotationY;
+
+    // Place body at hang start
+    this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    this.body.setTranslation(
+      { x: hangStartX, y: hangStartY, z: hangStartZ },
+      true
+    );
+
+    this.visual.playAnimation('hang-to-crouch');
+  }
+
   private updateSpieThirdPerson(
     camera: ArcRotateCamera | null,
     dtSeconds: number
@@ -1759,6 +2260,70 @@ export class LocalPlayer {
     );
     this.rightScratch.normalize();
 
+    // 1. Dynamic Ledge Climb Update
+    if (this.isClimbing) {
+      this.climbElapsed += dtSeconds;
+      const p = Math.min(1.0, this.climbElapsed / this.climbDuration);
+
+      let curX = this.climbStartPos.x;
+      let curY = this.climbStartPos.y;
+      let curZ = this.climbStartPos.z;
+
+      // During first 50% of climb (frames 0-35), root stays at hangStart while hands stay planted and body pulls up.
+      // During second 50% (frames 35-68), root smoothly glides to platform top target.
+      if (p > 0.5) {
+        const t = (p - 0.5) / 0.5;
+        const s = t * t * (3 - 2 * t);
+        curX =
+          this.climbStartPos.x +
+          (this.climbTargetPos.x - this.climbStartPos.x) * s;
+        curY =
+          this.climbStartPos.y +
+          (this.climbTargetPos.y - this.climbStartPos.y) * s;
+        curZ =
+          this.climbStartPos.z +
+          (this.climbTargetPos.z - this.climbStartPos.z) * s;
+      }
+
+      this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      this.body.setTranslation({ x: curX, y: curY, z: curZ }, true);
+
+      this.mesh.position.set(curX, curY, curZ);
+      this.mesh.rotation.y = this.rotationY;
+
+      this.visual.updateAnimation?.(dtSeconds, {
+        isMoving: false,
+        isStrafing: false,
+        moveDir: this.moveDirScratch,
+        camForward: this.forwardScratch,
+        camRight: this.rightScratch,
+        camAlpha: alpha,
+        rotationY: this.rotationY,
+        isCrouched: true,
+        isClimbing: true,
+        isGrounded: false,
+      });
+
+      this.currentAnim = this.visual.getCurrentAnimation();
+
+      if (p >= 1.0) {
+        this.isClimbing = false;
+        this.isCrouchToggled = true;
+        this.body.setTranslation(
+          {
+            x: this.climbTargetPos.x,
+            y: this.climbTargetPos.y,
+            z: this.climbTargetPos.z,
+          },
+          true
+        );
+        this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        this.visual.playAnimation('crouch-idle');
+      }
+      return;
+    }
+
+    // 2. Normal Locomotion Input
     this.moveDirScratch.set(0, 0, 0);
     if (this.keys['KeyW'] || this.keys['ArrowUp']) {
       this.moveDirScratch.addInPlace(this.forwardScratch);
@@ -1773,10 +2338,15 @@ export class LocalPlayer {
       this.moveDirScratch.subtractInPlace(this.rightScratch);
     }
 
-    const isSprinting = Boolean(
-      this.keys['ShiftLeft'] || this.keys['ShiftRight']
-    );
-    const moveSpeed = isSprinting ? RUN_SPEED : WALK_SPEED;
+    const isCrouched = this.isCrouchToggled;
+    const isSprinting =
+      !isCrouched &&
+      Boolean(this.keys['ShiftLeft'] || this.keys['ShiftRight']);
+    const moveSpeed = isCrouched
+      ? CROUCH_SPEED
+      : isSprinting
+        ? RUN_SPEED
+        : WALK_SPEED;
     const isMovingHorizontally = this.moveDirScratch.lengthSquared() > 0.0001;
 
     const currentVel = this.body.linvel();
@@ -1793,12 +2363,21 @@ export class LocalPlayer {
 
     let grounded = isPlayerGrounded(this.world, this.body);
     if (this.jumpRequested) {
-      if (grounded) {
-        this.body.applyImpulse({ x: 0, y: JUMP_IMPULSE, z: 0 }, true);
-        this.jumpedThisFrame = true;
-        grounded = false;
-      }
       this.jumpRequested = false;
+      // Disable jumping when the player is crouched or in the air:
+      // Must be on the ground and standing (cannot jump or mantle while in mid-air or crouched)
+      if (grounded && !isCrouched) {
+        const ledge = this.checkClimbableLedge();
+        if (ledge) {
+          this.startLedgeClimb(ledge);
+          return;
+        } else {
+          this.body.applyImpulse({ x: 0, y: JUMP_IMPULSE, z: 0 }, true);
+          this.jumpedThisFrame = true;
+          grounded = false;
+          this.visual.playAnimation('jump');
+        }
+      }
     }
 
     // Character rotation & heading
@@ -1834,6 +2413,9 @@ export class LocalPlayer {
       camRight: this.rightScratch,
       camAlpha: alpha,
       rotationY: this.rotationY,
+      isCrouched: this.isCrouchToggled,
+      isClimbing: false,
+      isGrounded: grounded,
     });
 
     this.currentAnim = this.visual.getCurrentAnimation();
