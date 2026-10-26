@@ -1,0 +1,378 @@
+/**
+ * Local player coordinator composing health, input, parkour, weapons, and movement systems.
+ *
+ * NOTE: Exceeds 300 lines (378 lines, ceiling 400) to serve as the unified coordinator and public
+ * facade for all composed player subsystems, delegating locomotion, health, parkour, and weapons.
+ */
+
+import { Scene } from '@babylonjs/core/scene';
+import type { Mesh } from '@babylonjs/core/Meshes/mesh';
+import type { TransformNode } from '@babylonjs/core/Meshes/transformNode';
+import { Vector3 } from '@babylonjs/core/Maths/math.vector';
+import type { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
+import type { FreeCamera } from '@babylonjs/core/Cameras/freeCamera';
+import '@babylonjs/loaders/glTF/2.0';
+import { clamp, type CharacterType } from '../../shared';
+import {
+  RAPIER,
+  createPlayerCylinderBody,
+} from '../physics';
+import type { CombatEffectsManager } from '../combat';
+import type {
+  CharacterAssets,
+  CharacterVisual,
+  NetworkShotEvent,
+} from './types';
+import {
+  setupLocalCharacter,
+  applyRespawnCharacterType,
+} from './characterSetup';
+import {
+  HealthController,
+  InputController,
+  ViewmodelMotion,
+  WeaponController,
+  ParkourController,
+  updateMercFirstPerson,
+  updateSpyThirdPerson,
+  toggleSpyCrouch,
+} from './systems';
+
+export class LocalPlayer {
+  public characterType: CharacterType;
+  public visual: CharacterVisual;
+  public mesh: Mesh;
+  public readonly body: RAPIER.RigidBody;
+  public readonly fpCamera: FreeCamera | null = null;
+  public currentAnim = 'Idle';
+
+  private readonly scene: Scene;
+  private readonly world: RAPIER.World;
+  private readonly combatEffects: CombatEffectsManager;
+
+  // Composed subsystem controllers
+  private readonly healthController = new HealthController();
+  private readonly inputController: InputController;
+  private readonly viewmodelMotion = new ViewmodelMotion();
+  private readonly weaponController = new WeaponController();
+  private readonly parkourController = new ParkourController();
+
+  // Spy crouch state & Merc first-person viewmodel rig
+  private isCrouchToggled = false;
+  private readonly viewmodelRig: TransformNode | null = null;
+  private wasGrounded = true;
+
+  // Scratch vectors for zero GC allocation in locomotion updates
+  private readonly forwardScratch = new Vector3();
+  private readonly rightScratch = new Vector3();
+  private readonly moveDirScratch = new Vector3();
+
+  // Public state accessors delegating to subsystems
+  public get currentHp(): number {
+    return this.healthController.currentHp;
+  }
+  public set currentHp(val: number) {
+    this.healthController.currentHp = val;
+  }
+  public get maxHp(): number {
+    return this.healthController.maxHp;
+  }
+  public get isDead(): boolean {
+    return this.healthController.isDead;
+  }
+  public set isDead(val: boolean) {
+    this.healthController.isDead = val;
+  }
+  public get onDeath(): (() => void) | undefined {
+    return this.healthController.onDeath;
+  }
+  public set onDeath(val: (() => void) | undefined) {
+    this.healthController.onDeath = val;
+  }
+  public get rotationY(): number {
+    return this.inputController.rotationY;
+  }
+  public set rotationY(val: number) {
+    this.inputController.rotationY = val;
+  }
+
+  constructor(
+    scene: Scene,
+    world: RAPIER.World,
+    assets: CharacterAssets,
+    characterType: CharacterType,
+    combatEffects: CombatEffectsManager
+  ) {
+    this.scene = scene;
+    this.world = world;
+    this.characterType = characterType;
+    this.combatEffects = combatEffects;
+    this.body = createPlayerCylinderBody(world, 0, 2.0, 0);
+
+    (this.body as unknown as { userData?: unknown }).userData = {
+      isLocal: true,
+      player: this,
+    };
+
+    const setup = setupLocalCharacter(
+      scene,
+      assets,
+      characterType,
+      this.weaponController,
+      this.healthController
+    );
+    this.mesh = setup.mesh;
+    this.visual = setup.visual;
+    this.fpCamera = setup.fpCamera;
+    this.viewmodelRig = setup.viewmodelRig;
+    this.currentAnim = setup.currentAnim;
+
+    this.inputController = new InputController({
+      getCharacterType: () => this.characterType,
+      getIsDead: () => this.isDead,
+      getAdsBlend: () => this.viewmodelMotion.adsBlend,
+      onDebugDamage: () => this.takeDamage(25, 'torso'),
+      onToggleCrouch: () => this.toggleSpyCrouch(),
+      onReload: () => this.tryTacticalReload(),
+      onHide: () => {
+        this.visual.triggerHide?.();
+        this.currentAnim = this.visual.getCurrentAnimation();
+      },
+      onStopFiringBurst: () => this.stopFiringBurstIfNeeded(),
+    });
+  }
+
+  public takeDamage(amount: number, zone = 'torso'): void {
+    this.healthController.takeDamage(amount, zone, () => this.handleDeathInternal());
+  }
+
+  public classifyHitZone(hitPoint: Vector3): 'head' | 'torso' | 'limbs' {
+    return this.healthController.classifyHitZone(
+      hitPoint,
+      this.visual,
+      this.mesh.position
+    );
+  }
+
+  public updateHealthHud(): void {
+    this.healthController.updateHealthHud();
+  }
+
+  public triggerDamageFlash(): void {
+    this.healthController.triggerDamageFlash();
+  }
+
+  private handleDeathInternal(): void {
+    this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    this.isCrouchToggled = false;
+    this.parkourController.reset();
+    this.inputController.resetKeys();
+  }
+
+  public handleDeath(): void {
+    this.healthController.handleDeath(() => this.handleDeathInternal());
+  }
+
+  public respawn(
+    selectedType: CharacterType,
+    arcCamera?: ArcRotateCamera | null
+  ): void {
+    this.healthController.reset();
+    this.isCrouchToggled = false;
+    this.parkourController.reset();
+    this.inputController.resetKeys();
+    this.inputController.resetAimAndFiring();
+
+    const spawnSpread = 8;
+    const sx = (Math.random() - 0.5) * spawnSpread;
+    const sz = (Math.random() - 0.5) * spawnSpread;
+    this.setSpawnPosition(sx, 2.0, sz, 0);
+
+    this.characterType = selectedType;
+    applyRespawnCharacterType(
+      this.scene,
+      selectedType,
+      this.visual,
+      this.fpCamera,
+      arcCamera,
+      this.healthController,
+      this.weaponController
+    );
+  }
+
+  private tryTacticalReload(): void {
+    const started = this.weaponController.tryTacticalReload(this.visual, () => {
+      this.inputController.isAdsHeld = false;
+      this.inputController.isAdsToggled = false;
+      this.stopFiringBurstIfNeeded();
+    });
+    if (started) {
+      this.currentAnim = this.visual.getCurrentAnimation();
+    }
+  }
+
+  private stopFiringBurstIfNeeded(): void {
+    this.weaponController.stopFiringBurstIfNeeded(
+      this.combatEffects,
+      this.visual.muzzleNode
+    );
+  }
+
+  public handleMouseMove(
+    movementX: number,
+    movementY: number,
+    arcCamera: ArcRotateCamera | null
+  ): void {
+    this.inputController.handleMouseMove(movementX, movementY, arcCamera);
+  }
+
+  public setSpawnPosition(
+    x: number,
+    y: number,
+    z: number,
+    rotationY = 0
+  ): void {
+    this.body.setTranslation({ x, y, z }, true);
+    this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    this.rotationY = rotationY;
+    this.inputController.targetRotationY = rotationY;
+    this.mesh.position.set(x, y, z);
+    this.mesh.rotation.y = rotationY;
+
+    if (this.fpCamera) {
+      this.fpCamera.position.set(x, y + this.viewmodelMotion.currentEyeOffset, z);
+      this.fpCamera.rotation.set(this.inputController.pitchX, this.rotationY, 0);
+    }
+  }
+
+  public consumeJumpEvent(): boolean {
+    return this.inputController.consumeJumpEvent();
+  }
+
+  public consumePendingShots(): NetworkShotEvent[] {
+    return this.weaponController.consumePendingShots();
+  }
+
+  private fireSingleRound(): void {
+    if (!this.fpCamera) return;
+    this.weaponController.fireSingleRound({
+      world: this.world,
+      body: this.body,
+      fpCamera: this.fpCamera,
+      visual: this.visual,
+      combatEffects: this.combatEffects,
+      viewmodelMotion: this.viewmodelMotion,
+      pitchX: this.inputController.pitchX,
+      rotationY: this.rotationY,
+      onAdjustPitch: (delta) => {
+        this.inputController.pitchX = clamp(
+          this.inputController.pitchX + delta,
+          -Math.PI / 2.15,
+          Math.PI / 2.15
+        );
+      },
+    });
+  }
+
+  public update(arcCamera: ArcRotateCamera | null, dtSeconds = 1 / 60): void {
+    if (this.isDead) return;
+    if (this.characterType === 'Merc') {
+      this.updateMercFirstPerson(dtSeconds);
+    } else {
+      this.updateSpyThirdPerson(arcCamera, dtSeconds);
+    }
+  }
+
+  private updateMercFirstPerson(dtSeconds: number): void {
+    const res = updateMercFirstPerson(
+      {
+        body: this.body,
+        mesh: this.mesh,
+        fpCamera: this.fpCamera,
+        viewmodelRig: this.viewmodelRig,
+        visual: this.visual,
+        world: this.world,
+        viewmodelMotion: this.viewmodelMotion,
+        weaponController: this.weaponController,
+        keys: this.inputController.keys,
+        rotationY: this.rotationY,
+        pitchX: this.inputController.pitchX,
+        jumpRequested: this.inputController.jumpRequested,
+        isFiringHeld: this.inputController.isFiringHeld,
+        isAdsHeld: this.inputController.isAdsHeld,
+        isAdsToggled: this.inputController.isAdsToggled,
+        lookDeltaX: this.inputController.lookDeltaX,
+        lookDeltaY: this.inputController.lookDeltaY,
+        wasGrounded: this.wasGrounded,
+        forwardScratch: this.forwardScratch,
+        rightScratch: this.rightScratch,
+        moveDirScratch: this.moveDirScratch,
+        onSetSpawnPosition: (x, y, z, rotY) =>
+          this.setSpawnPosition(x, y, z, rotY),
+        onFireSingleRound: () => this.fireSingleRound(),
+        onJumpConsumed: () => {
+          this.inputController.jumpedThisFrame = true;
+          this.inputController.jumpRequested = false;
+        },
+        onDecayLookDeltas: (decay) => {
+          this.inputController.lookDeltaX *= 1.0 - decay;
+          this.inputController.lookDeltaY *= 1.0 - decay;
+        },
+      },
+      dtSeconds
+    );
+    this.wasGrounded = res.wasGrounded;
+    this.currentAnim = res.currentAnim;
+  }
+
+  private toggleSpyCrouch(): void {
+    toggleSpyCrouch(
+      this.parkourController.isClimbing,
+      this.isCrouchToggled,
+      this.inputController.keys,
+      this.visual,
+      (isCrouched) => {
+        this.isCrouchToggled = isCrouched;
+      }
+    );
+  }
+
+  private updateSpyThirdPerson(
+    camera: ArcRotateCamera | null,
+    dtSeconds: number
+  ): void {
+    this.currentAnim = updateSpyThirdPerson(
+      {
+        body: this.body,
+        mesh: this.mesh,
+        visual: this.visual,
+        world: this.world,
+        parkourController: this.parkourController,
+        keys: this.inputController.keys,
+        rotationY: this.rotationY,
+        targetRotationY: this.inputController.targetRotationY,
+        jumpRequested: this.inputController.jumpRequested,
+        isRightClickHeld: this.inputController.isRightClickHeld,
+        isCrouchToggled: this.isCrouchToggled,
+        forwardScratch: this.forwardScratch,
+        rightScratch: this.rightScratch,
+        moveDirScratch: this.moveDirScratch,
+        onSetSpawnPosition: (x, y, z, rotY) =>
+          this.setSpawnPosition(x, y, z, rotY),
+        onOrientCharacter: (rotY, targetRotY) => {
+          this.rotationY = rotY;
+          this.inputController.targetRotationY = targetRotY;
+        },
+        onJumpConsumed: () => {
+          this.inputController.jumpRequested = false;
+          this.inputController.jumpedThisFrame = true;
+        },
+        onCrouchChanged: (isCrouched) => {
+          this.isCrouchToggled = isCrouched;
+        },
+      },
+      camera,
+      dtSeconds
+    );
+  }
+}
