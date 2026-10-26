@@ -1,5 +1,8 @@
 /**
  * First-person procedural viewmodel motion, sway, bobbing, recoil springs, and ADS iron-sight alignment.
+ *
+ * NOTE: Exceeds 300 lines (320 lines, ceiling 400) to keep procedural sway matrices, bobbing trigonometry,
+ * and dual-spring recoil simulation tightly coupled in a single coherent system.
  */
 
 import type { FreeCamera } from '@babylonjs/core/Cameras/freeCamera';

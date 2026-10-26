@@ -1,5 +1,8 @@
 /**
  * Orchestrator factory creating the 3D Spy character mesh, animations, and hitboxes.
+ *
+ * NOTE: Exceeds 300 lines (366 lines, ceiling 400) to preserve cohesive animation event closures,
+ * GLTF skeletal hierarchy traversal, and hit box mesh alignment.
  */
 
 import { Scene } from '@babylonjs/core/scene';

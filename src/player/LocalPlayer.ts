@@ -1,13 +1,16 @@
 /**
  * Local player coordinator composing health, input, parkour, weapons, and movement systems.
+ *
+ * NOTE: Exceeds 300 lines (378 lines, ceiling 400) to serve as the unified coordinator and public
+ * facade for all composed player subsystems, delegating locomotion, health, parkour, and weapons.
  */
 
 import { Scene } from '@babylonjs/core/scene';
-import { Mesh } from '@babylonjs/core/Meshes/mesh';
-import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
+import type { Mesh } from '@babylonjs/core/Meshes/mesh';
+import type { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import type { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
-import { FreeCamera } from '@babylonjs/core/Cameras/freeCamera';
+import type { FreeCamera } from '@babylonjs/core/Cameras/freeCamera';
 import '@babylonjs/loaders/glTF/2.0';
 import { clamp, type CharacterType } from '../../shared';
 import {
@@ -15,22 +18,15 @@ import {
   createPlayerCylinderBody,
 } from '../physics';
 import type { CombatEffectsManager } from '../combat';
-import {
-  setCrosshairVisible,
-  setAmmoHudVisible,
-  setHealthHudVisible,
-} from '../ui';
-import {
-  STANDING_EYE_OFFSET,
-  HIP_FOV_RAD,
-} from '../config/weapons';
 import type {
   CharacterAssets,
   CharacterVisual,
   NetworkShotEvent,
 } from './types';
-import { createMercVisual } from './visuals/merc';
-import { createSpieVisual } from './visuals/spie';
+import {
+  setupLocalCharacter,
+  applyRespawnCharacterType,
+} from './characterSetup';
 import {
   HealthController,
   InputController,
@@ -118,52 +114,18 @@ export class LocalPlayer {
       player: this,
     };
 
-    if (characterType === 'Merc') {
-      this.mesh = new Mesh('local_merc_collision_root', scene);
-      this.mesh.isVisible = false;
-      this.mesh.isPickable = false;
-
-      const fpCam = new FreeCamera(
-        'mercFirstPersonCamera',
-        new Vector3(0, 2.0 + STANDING_EYE_OFFSET, 0),
-        scene
-      );
-      fpCam.minZ = 0.02;
-      fpCam.fov = HIP_FOV_RAD;
-      fpCam.inputs.clear();
-      this.fpCamera = fpCam;
-
-      const rig = new TransformNode('mercViewmodelRig', scene);
-      rig.parent = fpCam;
-      this.viewmodelRig = rig;
-
-      this.visual = createMercVisual(
-        'local_merc_viewmodel',
-        scene,
-        assets.mercContainer,
-        true
-      );
-      this.visual.root.parent = rig;
-      this.currentAnim = this.visual.getCurrentAnimation();
-
-      setCrosshairVisible(true);
-      setAmmoHudVisible(true);
-      setHealthHudVisible(false);
-      this.weaponController.updateAmmoHud();
-    } else {
-      this.visual = createSpieVisual(
-        'local_spie_player',
-        scene,
-        assets.spieContainer
-      );
-      this.mesh = this.visual.root;
-      this.currentAnim = 'Idle';
-
-      setCrosshairVisible(false);
-      setHealthHudVisible(true);
-      setAmmoHudVisible(false);
-      this.healthController.updateHealthHud();
-    }
+    const setup = setupLocalCharacter(
+      scene,
+      assets,
+      characterType,
+      this.weaponController,
+      this.healthController
+    );
+    this.mesh = setup.mesh;
+    this.visual = setup.visual;
+    this.fpCamera = setup.fpCamera;
+    this.viewmodelRig = setup.viewmodelRig;
+    this.currentAnim = setup.currentAnim;
 
     this.inputController = new InputController({
       getCharacterType: () => this.characterType,
@@ -226,26 +188,16 @@ export class LocalPlayer {
     const sz = (Math.random() - 0.5) * spawnSpread;
     this.setSpawnPosition(sx, 2.0, sz, 0);
 
-    if (selectedType === 'Spie') {
-      this.characterType = 'Spie';
-      setHealthHudVisible(true);
-      setAmmoHudVisible(false);
-      setCrosshairVisible(false);
-      this.healthController.updateHealthHud();
-      this.visual.playAnimation('idle');
-      if (arcCamera) {
-        this.scene.activeCamera = arcCamera;
-      }
-    } else {
-      this.characterType = 'Merc';
-      setHealthHudVisible(false);
-      setAmmoHudVisible(true);
-      setCrosshairVisible(true);
-      this.weaponController.resetAmmo();
-      if (this.fpCamera) {
-        this.scene.activeCamera = this.fpCamera;
-      }
-    }
+    this.characterType = selectedType;
+    applyRespawnCharacterType(
+      this.scene,
+      selectedType,
+      this.visual,
+      this.fpCamera,
+      arcCamera,
+      this.healthController,
+      this.weaponController
+    );
   }
 
   private tryTacticalReload(): void {
