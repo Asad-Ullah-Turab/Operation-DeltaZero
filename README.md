@@ -91,12 +91,17 @@
 └──────────────────────────┴─────────────────────────────┘
 ```
 
-- **`src/main.ts`**: Entry point, engine lifecycle, canvas pointer locking, obstacle generation, and render loop.
-- **`src/player.ts`**: Player physics controller, character asset loading, viewmodel procedural rig, animation blending state machine, weapon mechanics, and recoil.
-- **`src/combat.ts`**: Bullet projectiles, particle muzzle flashes, surface impact sparks, and barrel smoke.
-- **`src/network.ts`**: Colyseus room event handling, movement packet replication, and remote player visual instantiation (`mercenary.glb` and `spy.glb`).
-- **`src/physics.ts`**: Rapier3D world initialization, kinematic ground colliders, obstacle bounding boxes, and player cylinder bodies.
-- **`server/GameRoom.ts`**: Authoritative Colyseus room managing state synchronization, character selection, shooting replication, and arena bounds.
+- **`src/app/`**: Startup pipeline, hardware-accelerated scene lifecycle, orbital & first-person cameras, and game render loop.
+- **`src/player/`**: Operative controllers, composed systems (health, input, parkour, weapons, movement), and decomposed visual avatar rigs (`Merc` & `Spie`).
+- **`src/combat/`**: Ballistics simulation, projectile pools, muzzle flashes, surface impact sparks, and barrel smoke.
+- **`src/network/`**: Colyseus WebSocket networking, remote player avatar interpolation, and room message routing.
+- **`src/physics/`**: Rapier3D WASM world initialization, kinematic ground colliders, obstacle bounding boxes, and player cylinder bodies.
+- **`src/world/`**: Deterministic obstacle layout generator and arena geometry builder.
+- **`src/ui/`**: Responsive DOM HUD overlays (ammo, health, damage flash, reticle, character select modal).
+- **`server/`**: Authoritative Colyseus room lifecycle and modular event handlers (`characterHandlers`, `movementHandlers`, `combatHandlers`).
+- **`shared/`**: Isomorphic protocol types, message constants, and combat damage configurations.
+
+For detailed architecture diagrams, sequence flows, and layering rules, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ---
 
