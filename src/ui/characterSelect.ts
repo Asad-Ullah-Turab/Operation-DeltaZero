@@ -12,7 +12,7 @@ export function showCharacterSelectMenu(
   onSelect: (type: CharacterType) => void
 ): void {
   const menuEl = getHtmlElement('character-select-menu');
-  const spyBtn = getHtmlElement('select-spie-btn');
+  const spyBtn = getHtmlElement('select-spy-btn');
   const mercBtn = getHtmlElement('select-merc-btn');
 
   if (menuEl) {
