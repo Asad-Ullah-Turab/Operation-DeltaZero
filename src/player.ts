@@ -22,6 +22,7 @@ import {
 } from './ui';
 import { normalizeAngle, lerpAngleY } from './utils/math';
 import { HealthController } from './player/systems/HealthController';
+import { InputController } from './player/systems/InputController';
 
 export { normalizeAngle, lerpAngleY };
 
@@ -59,8 +60,6 @@ const CROUCH_SPEED = 4.2;
 const ADS_WALK_SPEED = 4.8;
 const JUMP_IMPULSE = 6.2;
 const TURN_SMOOTH_SPEED = 14.0;
-const MOUSE_SENSITIVITY = 0.0022;
-const ADS_MOUSE_SENSITIVITY = 0.0014;
 
 const STANDING_EYE_OFFSET = 0.68;
 const CROUCH_EYE_OFFSET = 0.18;
@@ -91,7 +90,6 @@ export class LocalPlayer {
   public mesh: Mesh;
   public readonly body: RAPIER.RigidBody;
   public readonly fpCamera: FreeCamera | null = null;
-  public rotationY = 0;
   public currentAnim = 'Idle';
 
   private readonly healthController = new HealthController();
@@ -120,13 +118,80 @@ export class LocalPlayer {
 
   private readonly scene: Scene;
 
-  private pitchX = 0;
-  private targetRotationY = 0;
+  private readonly inputController: InputController;
+
+  public get pitchX(): number {
+    return this.inputController.pitchX;
+  }
+  public set pitchX(v: number) {
+    this.inputController.pitchX = v;
+  }
+  public get targetRotationY(): number {
+    return this.inputController.targetRotationY;
+  }
+  public set targetRotationY(v: number) {
+    this.inputController.targetRotationY = v;
+  }
+  public get rotationY(): number {
+    return this.inputController.rotationY;
+  }
+  public set rotationY(v: number) {
+    this.inputController.rotationY = v;
+  }
+  public get keys(): Record<string, boolean> {
+    return this.inputController.keys;
+  }
+  public get jumpRequested(): boolean {
+    return this.inputController.jumpRequested;
+  }
+  public set jumpRequested(v: boolean) {
+    this.inputController.jumpRequested = v;
+  }
+  public get jumpedThisFrame(): boolean {
+    return this.inputController.jumpedThisFrame;
+  }
+  public set jumpedThisFrame(v: boolean) {
+    this.inputController.jumpedThisFrame = v;
+  }
+  public get isRightClickHeld(): boolean {
+    return this.inputController.isRightClickHeld;
+  }
+  public set isRightClickHeld(v: boolean) {
+    this.inputController.isRightClickHeld = v;
+  }
+  public get isFiringHeld(): boolean {
+    return this.inputController.isFiringHeld;
+  }
+  public set isFiringHeld(v: boolean) {
+    this.inputController.isFiringHeld = v;
+  }
+  public get isAdsHeld(): boolean {
+    return this.inputController.isAdsHeld;
+  }
+  public set isAdsHeld(v: boolean) {
+    this.inputController.isAdsHeld = v;
+  }
+  public get isAdsToggled(): boolean {
+    return this.inputController.isAdsToggled;
+  }
+  public set isAdsToggled(v: boolean) {
+    this.inputController.isAdsToggled = v;
+  }
+  public get lookDeltaX(): number {
+    return this.inputController.lookDeltaX;
+  }
+  public set lookDeltaX(v: number) {
+    this.inputController.lookDeltaX = v;
+  }
+  public get lookDeltaY(): number {
+    return this.inputController.lookDeltaY;
+  }
+  public set lookDeltaY(v: number) {
+    this.inputController.lookDeltaY = v;
+  }
+
   private readonly world: RAPIER.World;
   private readonly combatEffects: CombatEffectsManager;
-  private readonly keys: Record<string, boolean> = {};
-  private jumpRequested = false;
-  private jumpedThisFrame = false;
 
   // Spie third-person crouch & climbing state
   private isCrouchToggled = false;
@@ -140,14 +205,9 @@ export class LocalPlayer {
   private currentMagazineRounds = MAGAZINE_CAPACITY;
   private readonly reserveMagazines: number[] = [];
 
-  // Firing & ADS input state
-  private isRightClickHeld = false;
-  private isFiringHeld = false;
+  // Firing & ADS state
   private fireCooldown = 0;
   private burstShotsFired = 0;
-  private isAdsHeld = false;
-  private isAdsToggled = false;
-  private rmbDownTimestamp = 0;
   private adsBlend = 0;
 
   // Queued network shot events for replication
@@ -177,8 +237,6 @@ export class LocalPlayer {
   private landSpringPosY = 0;
   private landSpringVelY = 0;
 
-  private lookDeltaX = 0;
-  private lookDeltaY = 0;
   private swayPosX = 0;
   private swayPosY = 0;
   private swayRotX = 0;
@@ -269,7 +327,19 @@ export class LocalPlayer {
       this.updateHealthHud();
     }
 
-    this.initInput();
+    this.inputController = new InputController({
+      getCharacterType: () => this.characterType,
+      getIsDead: () => this.isDead,
+      getAdsBlend: () => this.adsBlend,
+      onDebugDamage: () => this.takeDamage(25, 'torso'),
+      onToggleCrouch: () => this.toggleSpieCrouch(),
+      onReload: () => this.tryTacticalReload(),
+      onHide: () => {
+        this.visual.triggerHide?.();
+        this.currentAnim = this.visual.getCurrentAnimation();
+      },
+      onStopFiringBurst: () => this.stopFiringBurstIfNeeded(),
+    });
   }
 
   private updateAmmoHud(): void {
@@ -306,9 +376,7 @@ export class LocalPlayer {
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.isCrouchToggled = false;
     this.isClimbing = false;
-    for (const k of Object.keys(this.keys)) {
-      this.keys[k] = false;
-    }
+    this.inputController.resetKeys();
   }
 
   public handleDeath(): void {
@@ -322,9 +390,8 @@ export class LocalPlayer {
     this.healthController.reset();
     this.isCrouchToggled = false;
     this.isClimbing = false;
-    for (const k of Object.keys(this.keys)) {
-      this.keys[k] = false;
-    }
+    this.inputController.resetKeys();
+    this.inputController.resetAimAndFiring();
 
     const spawnSpread = 8;
     const sx = (Math.random() - 0.5) * spawnSpread;
@@ -395,157 +462,12 @@ export class LocalPlayer {
     this.burstShotsFired = 0;
   }
 
-  private initInput(): void {
-    window.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (this.isDead) return;
-
-      if (e.code === 'KeyK' && this.characterType === 'Spie') {
-        // Debug test shot on Spy (torso -25 HP)
-        this.takeDamage(25, 'torso');
-        return;
-      }
-
-      this.keys[e.code] = true;
-
-      if (e.code === 'Space' && !e.repeat) {
-        this.jumpRequested = true;
-      }
-
-      if (e.code === 'KeyC' && !e.repeat) {
-        if (this.characterType === 'Spie') {
-          this.toggleSpieCrouch();
-        }
-      }
-
-      if (this.characterType === 'Merc' && !e.repeat) {
-        if (e.code === 'KeyR') {
-          this.tryTacticalReload();
-        } else if (e.code === 'KeyH') {
-          this.isAdsHeld = false;
-          this.isAdsToggled = false;
-          this.stopFiringBurstIfNeeded();
-          this.visual.triggerHide?.();
-          this.currentAnim = this.visual.getCurrentAnimation();
-        }
-      }
-    });
-
-    window.addEventListener('keyup', (e: KeyboardEvent) => {
-      this.keys[e.code] = false;
-    });
-
-    // NOTE: Pointer events are used instead of mousedown/mouseup because
-    // Babylon's scene InputManager calls preventDefault() on canvas
-    // `pointerdown`, which suppresses legacy mouse events.
-    //
-    // CRITICAL: We deliberately DO NOT listen to `pointermove` for button state!
-    // Under pointer lock (especially on Linux/Wayland and in Firefox), `pointermove`
-    // events often report `e.buttons === 0` during cursor translation.
-    // Relying on `pointermove` to detect LMB state caused the weapon to stop firing
-    // immediately whenever the mouse was moved.
-    const onPointerDown = (e: PointerEvent): void => {
-      if (e.pointerType !== 'mouse') return;
-      // Ignore clicks before pointer lock is active or when eliminated
-      if (document.pointerLockElement === null || this.isDead) return;
-
-      if (e.button === 2) {
-        this.isRightClickHeld = true;
-      }
-
-      if (this.characterType === 'Merc') {
-        if (e.button === 0) {
-          this.isFiringHeld = true;
-        } else if (e.button === 2) {
-          this.rmbDownTimestamp = performance.now();
-          if (this.isAdsToggled) {
-            this.isAdsToggled = false;
-            this.isAdsHeld = false;
-          } else {
-            this.isAdsHeld = true;
-          }
-        }
-      }
-    };
-
-    const onPointerUp = (e: PointerEvent): void => {
-      if (e.pointerType !== 'mouse') return;
-
-      if (e.button === 2) {
-        this.isRightClickHeld = false;
-      }
-
-      if (this.characterType === 'Merc') {
-        if (e.button === 0) {
-          this.isFiringHeld = false;
-          this.stopFiringBurstIfNeeded();
-        } else if (e.button === 2) {
-          const heldMs = performance.now() - this.rmbDownTimestamp;
-          if (this.isAdsHeld && heldMs < 180) {
-            // Short click toggles ADS on
-            this.isAdsToggled = true;
-          }
-          this.isAdsHeld = false;
-        }
-      }
-    };
-
-    const resetAimAndFiring = (): void => {
-      this.isRightClickHeld = false;
-      this.isFiringHeld = false;
-      this.isAdsHeld = false;
-      this.isAdsToggled = false;
-      this.stopFiringBurstIfNeeded();
-    };
-
-    window.addEventListener('pointerdown', onPointerDown, { capture: true });
-    window.addEventListener('pointerup', onPointerUp, { capture: true });
-    window.addEventListener('pointercancel', resetAimAndFiring);
-    document.addEventListener('pointerlockchange', () => {
-      if (document.pointerLockElement === null) {
-        resetAimAndFiring();
-      }
-    });
-
-    window.addEventListener('contextmenu', (e: MouseEvent) => {
-      e.preventDefault();
-    });
-
-    window.addEventListener('blur', () => {
-      for (const k of Object.keys(this.keys)) {
-        this.keys[k] = false;
-      }
-      resetAimAndFiring();
-    });
-  }
-
   public handleMouseMove(
     movementX: number,
     movementY: number,
     arcCamera: ArcRotateCamera | null
   ): void {
-    if (this.isDead) return;
-    if (this.characterType === 'Merc') {
-      const sens =
-        MOUSE_SENSITIVITY +
-        (ADS_MOUSE_SENSITIVITY - MOUSE_SENSITIVITY) * this.adsBlend;
-      this.rotationY += movementX * sens;
-      this.pitchX = clamp(
-        this.pitchX + movementY * sens,
-        -Math.PI / 2.15,
-        Math.PI / 2.15
-      );
-      this.lookDeltaX += movementX;
-      this.lookDeltaY += movementY;
-    } else if (arcCamera) {
-      arcCamera.alpha -= movementX * MOUSE_SENSITIVITY;
-      const lowerBeta = arcCamera.lowerBetaLimit ?? 0.25;
-      const upperBeta = arcCamera.upperBetaLimit ?? Math.PI / 2 - 0.08;
-      arcCamera.beta = clamp(
-        arcCamera.beta - movementY * MOUSE_SENSITIVITY,
-        lowerBeta,
-        upperBeta
-      );
-    }
+    this.inputController.handleMouseMove(movementX, movementY, arcCamera);
   }
 
   public setSpawnPosition(
