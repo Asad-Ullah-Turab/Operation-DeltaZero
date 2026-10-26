@@ -9,3 +9,4 @@ export const CHARACTER_ASSET_FILES = {
   FPS_MERC: 'fps_merc_m4a1.glb',
   MERCENARY: 'mercenary.glb',
 } as const;
+

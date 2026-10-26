@@ -33,3 +33,4 @@ export function updateParticles(
     p.mesh.visibility = p.initialAlpha * (1.0 - t);
   }
 }
+

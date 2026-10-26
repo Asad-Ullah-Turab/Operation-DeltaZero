@@ -5,3 +5,4 @@
 export type CharacterType = 'Spie' | 'Merc';
 
 export type HitZone = 'head' | 'torso' | 'limbs';
+

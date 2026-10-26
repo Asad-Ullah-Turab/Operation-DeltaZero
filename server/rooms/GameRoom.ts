@@ -50,3 +50,4 @@ export class GameRoom extends Room<GameState> {
     console.log(`[GameRoom] Player left: ${client.sessionId}`);
   }
 }
+

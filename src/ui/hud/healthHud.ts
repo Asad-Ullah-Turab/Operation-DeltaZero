@@ -61,3 +61,4 @@ export function updateHealthHud(currentHp: number, maxHp = 100): void {
     }
   }
 }
+

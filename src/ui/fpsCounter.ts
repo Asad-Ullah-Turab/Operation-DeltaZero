@@ -17,3 +17,4 @@ export function updateFpsCounter(fps: number): void {
     cachedFpsCounterEl.textContent = 'FPS: ' + fps.toFixed(0);
   }
 }
+

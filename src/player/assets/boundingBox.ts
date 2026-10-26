@@ -27,3 +27,4 @@ export function computeModelHeightAndBaseY(container: AssetContainer): {
   }
   return { height, baseY: Number.isFinite(minY) ? minY : 0 };
 }
+

@@ -43,3 +43,4 @@ export function initScene(canvas: HTMLCanvasElement): SceneContext {
 
   return { engine, scene, light };
 }
+

@@ -56,3 +56,4 @@ export function registerMovementHandlers(room: Room<GameState>): void {
     }
   });
 }
+

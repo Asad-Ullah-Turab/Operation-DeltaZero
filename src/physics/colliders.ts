@@ -84,3 +84,4 @@ export function createPlayerCylinderBody(
   world.createCollider(colliderDesc, body);
   return body;
 }
+

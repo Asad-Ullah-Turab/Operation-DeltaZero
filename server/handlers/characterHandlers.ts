@@ -62,3 +62,4 @@ export function registerCharacterHandlers(room: Room<GameState>): void {
     }
   );
 }
+

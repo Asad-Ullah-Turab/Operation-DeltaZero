@@ -16,3 +16,4 @@ export function getServerUrl(port = DEFAULT_SERVER_PORT): string {
       : 'localhost';
   return `ws://${hostname}:${port}`;
 }
+

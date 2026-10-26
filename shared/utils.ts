@@ -17,3 +17,4 @@ export function clamp(value: number, min: number, max: number): number {
 export function sanitizeCharacterType(value: unknown): CharacterType {
   return value === 'Merc' ? 'Merc' : 'Spie';
 }
+

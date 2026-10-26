@@ -273,3 +273,4 @@ export class ParkourController {
     this.climbElapsed = 0;
   }
 }
+

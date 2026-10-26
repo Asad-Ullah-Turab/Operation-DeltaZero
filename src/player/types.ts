@@ -101,3 +101,4 @@ export const SPIE_TRACK_CONFIGS: Array<{
   { name: 'jump', isLooping: false, speedRatio: 1.15 },
   { name: 'hang-to-crouch', isLooping: false, speedRatio: 1.0 },
 ];
+

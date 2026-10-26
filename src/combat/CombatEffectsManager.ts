@@ -130,3 +130,4 @@ export class CombatEffectsManager {
     updateParticles(this.particles, dtSeconds);
   }
 }
+

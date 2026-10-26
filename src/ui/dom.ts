@@ -9,3 +9,4 @@ export function getHtmlElement<T extends HTMLElement>(id: string): T | null {
   if (typeof document === 'undefined') return null;
   return document.getElementById(id) as T | null;
 }
+

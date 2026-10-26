@@ -244,3 +244,4 @@ sequenceDiagram
 | **Movement mechanic (e.g. sliding, vaulting)** | `src/player/systems/` (create dedicated system, compose in `LocalPlayer.ts`) |
 | **New HUD element or GUI screen** | `src/ui/hud/` or `src/ui/`, styled in `src/styles/` |
 | **New particle effect or impact VFX** | `src/combat/effects/` |
+

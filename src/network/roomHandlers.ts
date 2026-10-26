@@ -223,3 +223,4 @@ export function bindStateHandlers(
   bindRespawnHandler(room, ctx.remotePlayerManager);
   bindPlayerStateHandlers(room, ctx);
 }
+

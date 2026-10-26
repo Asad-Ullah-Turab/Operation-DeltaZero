@@ -49,3 +49,4 @@ export function updateAmmoHud(currentRounds: number, reserveMagsCount: number): 
     }`;
   }
 }
+

@@ -71,3 +71,4 @@ export function startGameLoop(params: GameLoopParams): void {
     engine.resize();
   });
 }
+

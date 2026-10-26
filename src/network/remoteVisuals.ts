@@ -33,3 +33,4 @@ export function createRemoteVisual(
     assets.spieContainer
   );
 }
+

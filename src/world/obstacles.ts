@@ -66,3 +66,4 @@ export function generateObstacleSpecs(): ObstacleBoxSpec[] {
 
   return specs;
 }
+

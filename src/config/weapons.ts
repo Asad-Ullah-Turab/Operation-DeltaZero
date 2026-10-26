@@ -36,3 +36,4 @@ export const ARM_VERTEX_CORRECTION_SCALE = -1.0 / 3840.0;
 // Low-Ready Animation Frame Markers
 export const HIDE_LOW_READY_FRAME = 10;
 export const DRAW_FROM_LOW_READY_FRAME = 22;
+

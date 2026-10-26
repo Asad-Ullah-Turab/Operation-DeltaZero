@@ -14,3 +14,4 @@ export const GRAVITY_Y = -19.81;
 
 export const OBSTACLE_SEED = 2026;
 export const OBSTACLE_COUNT = 28;
+

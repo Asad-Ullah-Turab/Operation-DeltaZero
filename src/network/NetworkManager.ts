@@ -176,3 +176,4 @@ export class NetworkManager {
     this.remotePlayerManager.interpolate(dtSeconds);
   }
 }
+

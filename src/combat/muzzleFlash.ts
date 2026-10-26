@@ -114,3 +114,4 @@ export function updateMuzzleFlashes(activeFlashes: ActiveMuzzleFlash[]): void {
     }
   }
 }
+

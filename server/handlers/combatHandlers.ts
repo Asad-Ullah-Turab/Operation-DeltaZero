@@ -77,3 +77,4 @@ export function registerCombatHandlers(room: Room<GameState>): void {
     room.broadcast(MSG_PLAYER_DIED, { sessionId: client.sessionId }, { except: client });
   });
 }
+

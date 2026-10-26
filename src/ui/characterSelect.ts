@@ -48,3 +48,4 @@ export function waitForCharacterSelection(): Promise<CharacterType> {
     showCharacterSelectMenu((type) => resolve(type));
   });
 }
+

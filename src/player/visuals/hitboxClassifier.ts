@@ -82,3 +82,4 @@ export function createHitboxClassifier(
     return 'limbs';
   };
 }
+

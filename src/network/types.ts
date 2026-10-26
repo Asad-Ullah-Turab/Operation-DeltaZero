@@ -36,3 +36,4 @@ export interface RemotePlayer {
   targetAnim: string;
   body?: RAPIER.RigidBody;
 }
+

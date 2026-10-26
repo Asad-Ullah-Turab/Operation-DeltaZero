@@ -233,3 +233,4 @@ export function updateSpieThirdPerson(
 
   return visual.getCurrentAnimation();
 }
+

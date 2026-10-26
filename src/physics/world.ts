@@ -13,3 +13,4 @@ export async function initPhysicsWorld(): Promise<RAPIER.World> {
   const gravity = new RAPIER.Vector3(0.0, GRAVITY_Y, 0.0);
   return new RAPIER.World(gravity);
 }
+

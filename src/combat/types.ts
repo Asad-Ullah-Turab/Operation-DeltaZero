@@ -36,3 +36,4 @@ export interface BulletHitEvent {
   collider: RAPIER.Collider;
   body: RAPIER.RigidBody | null;
 }
+

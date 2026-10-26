@@ -24,3 +24,4 @@ export function getDamageForHitZone(zone?: string): number {
   if (zone === 'torso') return TORSO_DAMAGE;
   return LIMBS_DAMAGE;
 }
+

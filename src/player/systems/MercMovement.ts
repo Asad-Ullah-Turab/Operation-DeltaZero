@@ -220,3 +220,4 @@ export function updateMercFirstPerson(
 
   return { wasGrounded, currentAnim };
 }
+

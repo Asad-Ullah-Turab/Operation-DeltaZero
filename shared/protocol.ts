@@ -89,3 +89,4 @@ export interface PlayerRespawnedPayload {
 export interface JoinOptions {
   characterType?: CharacterType;
 }
+

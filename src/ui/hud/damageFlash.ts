@@ -26,3 +26,4 @@ export function triggerDamageFlash(): void {
     flashTimeout = null;
   }, 120);
 }
+

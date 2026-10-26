@@ -53,3 +53,4 @@ export function setActiveCameraForCharacter(
     scene.activeCamera = arcCamera;
   }
 }
+

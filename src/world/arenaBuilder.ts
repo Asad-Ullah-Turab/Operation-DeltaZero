@@ -57,3 +57,4 @@ export function buildArena(scene: Scene, world: RAPIER.World): void {
     boxMesh.freezeWorldMatrix();
   });
 }
+
