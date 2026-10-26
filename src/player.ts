@@ -13,12 +13,24 @@ import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 import '@babylonjs/loaders/glTF/2.0';
 import {
   RAPIER,
-  PLAYER_HALF_HEIGHT,
   createPlayerCylinderBody,
   isPlayerGrounded,
 } from './physics';
+import { PLAYER_HALF_HEIGHT } from './config/arena';
 import { CombatEffectsManager, createMuzzleFlashMesh } from './combat';
 import { clamp, type CharacterType } from '../shared';
+import {
+  setCrosshairVisible,
+  setCrosshairOpacity,
+  setAmmoHudVisible,
+  setHealthHudVisible,
+  updateAmmoHud as uiUpdateAmmoHud,
+  updateHealthHud as uiUpdateHealthHud,
+  triggerDamageFlash as uiTriggerDamageFlash,
+} from './ui';
+import { normalizeAngle, lerpAngleY } from './utils/math';
+
+export { normalizeAngle, lerpAngleY };
 
 export type { CharacterType };
 
@@ -229,16 +241,7 @@ function computeModelHeightAndBaseY(container: AssetContainer): {
   return { height, baseY: Number.isFinite(minY) ? minY : 0 };
 }
 
-/**
- * Normalizes an angle in radians into the range [-PI, PI].
- */
-export function normalizeAngle(angle: number): number {
-  let diff = (angle + Math.PI) % (Math.PI * 2);
-  if (diff < 0) {
-    diff += Math.PI * 2;
-  }
-  return diff - Math.PI;
-}
+
 
 export type SpieAnimationName =
   | 'idle'
@@ -1444,17 +1447,7 @@ export function createMercWorldVisual(
   };
 }
 
-/**
- * Shortest-angle interpolation on [-PI, PI] for smooth character turning.
- */
-export function lerpAngleY(
-  current: number,
-  target: number,
-  factor: number
-): number {
-  const diff = normalizeAngle(target - current);
-  return current + diff * Math.min(1.0, factor);
-}
+
 
 /**
  * Local player controller supporting both 'Spie' (third-person) and 'Merc'
@@ -1546,17 +1539,6 @@ export class LocalPlayer {
   private lowReadyBlend = 0;
   private currentEyeOffset = STANDING_EYE_OFFSET;
 
-  // DOM HUD references
-  private readonly crosshairEl: HTMLElement | null;
-  private readonly ammoHudEl: HTMLElement | null;
-  private readonly ammoRoundsEl: HTMLElement | null;
-  private readonly ammoMagsBarsEl: HTMLElement | null;
-  private readonly ammoMagsCountEl: HTMLElement | null;
-  private readonly healthHudEl: HTMLElement | null;
-  private readonly healthValueEl: HTMLElement | null;
-  private readonly healthFillEl: HTMLElement | null;
-  private readonly damageFlashEl: HTMLElement | null;
-
   // Pre-allocated scratch vectors to avoid GC pauses in the render loop
   private readonly forwardScratch = new Vector3();
   private readonly rightScratch = new Vector3();
@@ -1579,16 +1561,6 @@ export class LocalPlayer {
       isLocal: true,
       player: this,
     };
-
-    this.crosshairEl = document.getElementById('crosshair');
-    this.ammoHudEl = document.getElementById('ammo-hud');
-    this.ammoRoundsEl = document.getElementById('ammo-rounds');
-    this.ammoMagsBarsEl = document.getElementById('ammo-mags-bars');
-    this.ammoMagsCountEl = document.getElementById('ammo-mags-count');
-    this.healthHudEl = document.getElementById('health-hud');
-    this.healthValueEl = document.getElementById('health-value');
-    this.healthFillEl = document.getElementById('health-bar-fill');
-    this.damageFlashEl = document.getElementById('damage-flash');
 
     // Initialize 4 reserve magazines of 30 rounds each (5 magazines total with loaded mag)
     for (let i = 0; i < INITIAL_RESERVE_MAGAZINES; i++) {
@@ -1628,8 +1600,9 @@ export class LocalPlayer {
       this.currentAnim = this.visual.getCurrentAnimation();
 
       // Reveal tactical ammunition HUD in bottom-right corner
-      this.ammoHudEl?.classList.remove('hidden');
-      this.healthHudEl?.classList.add('hidden');
+      setCrosshairVisible(true);
+      setAmmoHudVisible(true);
+      setHealthHudVisible(false);
       this.updateAmmoHud();
     } else {
       this.visual = createSpieVisual(
@@ -1641,8 +1614,9 @@ export class LocalPlayer {
       this.currentAnim = 'Idle';
 
       // Reveal tactical health HUD in bottom-right corner
-      this.healthHudEl?.classList.remove('hidden');
-      this.ammoHudEl?.classList.add('hidden');
+      setCrosshairVisible(false);
+      setHealthHudVisible(true);
+      setAmmoHudVisible(false);
       this.updateHealthHud();
     }
 
@@ -1650,29 +1624,7 @@ export class LocalPlayer {
   }
 
   private updateAmmoHud(): void {
-    if (this.ammoRoundsEl) {
-      this.ammoRoundsEl.textContent = String(this.currentMagazineRounds);
-      this.ammoRoundsEl.classList.toggle(
-        'low',
-        this.currentMagazineRounds > 0 && this.currentMagazineRounds <= 8
-      );
-      this.ammoRoundsEl.classList.toggle(
-        'empty',
-        this.currentMagazineRounds === 0
-      );
-    }
-
-    const reserveCount = this.reserveMagazines.length;
-    if (this.ammoMagsBarsEl) {
-      const bars = '|'.repeat(reserveCount);
-      this.ammoMagsBarsEl.textContent =
-        reserveCount > 0 ? `[ ${bars} ]` : '[   ]';
-    }
-    if (this.ammoMagsCountEl) {
-      this.ammoMagsCountEl.textContent = `${reserveCount} ${
-        reserveCount === 1 ? 'MAG' : 'MAGS'
-      }`;
-    }
+    uiUpdateAmmoHud(this.currentMagazineRounds, this.reserveMagazines.length);
   }
 
   /**
@@ -1713,44 +1665,11 @@ export class LocalPlayer {
   }
 
   public updateHealthHud(): void {
-    if (this.healthValueEl) {
-      this.healthValueEl.textContent = String(this.currentHp);
-      this.healthValueEl.className = 'health-value';
-      if (this.currentHp <= 25) {
-        this.healthValueEl.classList.add('low');
-      } else if (this.currentHp <= 50) {
-        this.healthValueEl.classList.add('mid');
-      }
-    }
-
-    if (this.healthFillEl) {
-      const pct = Math.max(0, Math.min(100, (this.currentHp / 100) * 100));
-      this.healthFillEl.style.width = `${pct}%`;
-      this.healthFillEl.className = 'health-bar-fill';
-      if (this.currentHp <= 25) {
-        this.healthFillEl.classList.add('low');
-      } else if (this.currentHp <= 50) {
-        this.healthFillEl.classList.add('mid');
-      }
-    }
-
-    if (this.healthHudEl) {
-      if (this.currentHp <= 25) {
-        this.healthHudEl.style.borderRightColor = '#ef4444';
-      } else if (this.currentHp <= 50) {
-        this.healthHudEl.style.borderRightColor = '#f59e0b';
-      } else {
-        this.healthHudEl.style.borderRightColor = '#10b981';
-      }
-    }
+    uiUpdateHealthHud(this.currentHp, this.maxHp);
   }
 
   private triggerDamageFlash(): void {
-    if (!this.damageFlashEl) return;
-    this.damageFlashEl.classList.add('active');
-    setTimeout(() => {
-      this.damageFlashEl?.classList.remove('active');
-    }, 120);
+    uiTriggerDamageFlash();
   }
 
   private handleDeath(): void {
@@ -1790,9 +1709,9 @@ export class LocalPlayer {
 
     if (selectedType === 'Spie') {
       this.characterType = 'Spie';
-      this.healthHudEl?.classList.remove('hidden');
-      this.ammoHudEl?.classList.add('hidden');
-      this.crosshairEl?.classList.add('hidden');
+      setHealthHudVisible(true);
+      setAmmoHudVisible(false);
+      setCrosshairVisible(false);
       this.updateHealthHud();
       this.visual.playAnimation('idle');
       if (arcCamera) {
@@ -1800,9 +1719,9 @@ export class LocalPlayer {
       }
     } else {
       this.characterType = 'Merc';
-      this.healthHudEl?.classList.add('hidden');
-      this.ammoHudEl?.classList.remove('hidden');
-      this.crosshairEl?.classList.remove('hidden');
+      setHealthHudVisible(false);
+      setAmmoHudVisible(true);
+      setCrosshairVisible(true);
       this.currentMagazineRounds = MAGAZINE_CAPACITY;
       this.reserveMagazines.length = 0;
       for (let i = 0; i < INITIAL_RESERVE_MAGAZINES; i++) {
@@ -2261,9 +2180,7 @@ export class LocalPlayer {
       this.adsBlend = Math.max(targetAds, this.adsBlend - adsStep);
     }
 
-    if (this.crosshairEl) {
-      this.crosshairEl.style.opacity = (1.0 - this.adsBlend).toFixed(2);
-    }
+    setCrosshairOpacity(1.0 - this.adsBlend);
 
     // 5. Procedural Crouching & Camera Recoil Spring Recovery
     const targetCrouch = isCrouching ? 1.0 : 0.0;

@@ -11,10 +11,9 @@ import {
   initPhysicsWorld,
   createGroundCollider,
   createStaticObstacleBox,
-  generateObstacleSpecs,
-  GROUND_WIDTH,
-  GROUND_DEPTH,
 } from './physics';
+import { generateObstacleSpecs } from './world/obstacles';
+import { GROUND_WIDTH, GROUND_DEPTH } from './config/arena';
 import {
   LocalPlayer,
   loadCharacterAssets,
@@ -22,42 +21,12 @@ import {
 import { CombatEffectsManager } from './combat';
 import { NetworkManager } from './network';
 import { getDamageForHitZone, type CharacterType } from '../shared';
-
-function showCharacterSelectMenu(onSelect: (type: CharacterType) => void): void {
-  const menuEl = document.getElementById('character-select-menu');
-  const spieBtn = document.getElementById('select-spie-btn');
-  const mercBtn = document.getElementById('select-merc-btn');
-
-  if (menuEl) {
-    menuEl.classList.remove('hidden');
-  }
-
-  const cleanup = (): void => {
-    spieBtn?.removeEventListener('click', handleSpie);
-    mercBtn?.removeEventListener('click', handleMerc);
-  };
-
-  const handleSpie = (): void => {
-    cleanup();
-    if (menuEl) menuEl.classList.add('hidden');
-    onSelect('Spie');
-  };
-
-  const handleMerc = (): void => {
-    cleanup();
-    if (menuEl) menuEl.classList.add('hidden');
-    onSelect('Merc');
-  };
-
-  spieBtn?.addEventListener('click', handleSpie);
-  mercBtn?.addEventListener('click', handleMerc);
-}
-
-function waitForCharacterSelection(): Promise<CharacterType> {
-  return new Promise((resolve) => {
-    showCharacterSelectMenu((type) => resolve(type));
-  });
-}
+import {
+  showCharacterSelectMenu,
+  waitForCharacterSelection,
+  updateFpsCounter,
+  setCrosshairVisible,
+} from './ui';
 
 async function bootstrap(): Promise<void> {
   const canvas = document.getElementById(
@@ -67,8 +36,8 @@ async function bootstrap(): Promise<void> {
     throw new Error('Missing #renderCanvas element');
   }
 
-  const fpsElement = document.getElementById('fps-counter');
-  const crosshairElement = document.getElementById('crosshair');
+
+
 
   // 1. Initialize Babylon Engine optimized for low-spec / integrated GPUs
   const engine = new Engine(canvas, true, {
@@ -143,11 +112,7 @@ async function bootstrap(): Promise<void> {
   const selectedCharacterType = await selectionPromise;
 
   // Show crosshair if Mercenary, hide if Spie
-  if (selectedCharacterType === 'Merc') {
-    crosshairElement?.classList.remove('hidden');
-  } else {
-    crosshairElement?.classList.add('hidden');
-  }
+  setCrosshairVisible(selectedCharacterType === 'Merc');
 
   canvas.focus();
   void canvas.requestPointerLock?.();
@@ -282,8 +247,8 @@ async function bootstrap(): Promise<void> {
 
     // Update FPS counter once every 500ms to prevent DOM layout thrashing
     const now = performance.now();
-    if (fpsElement && now - lastFpsUpdate >= 500) {
-      fpsElement.textContent = `FPS: ${engine.getFps().toFixed(0)}`;
+    if (now - lastFpsUpdate >= 500) {
+      updateFpsCounter(engine.getFps());
       lastFpsUpdate = now;
     }
 

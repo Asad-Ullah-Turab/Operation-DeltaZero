@@ -11,7 +11,8 @@ import {
   lerpAngleY,
 } from './player';
 import { CombatEffectsManager } from './combat';
-import { PLAYER_HALF_HEIGHT, PLAYER_RADIUS } from './physics';
+import { PLAYER_HALF_HEIGHT, PLAYER_RADIUS } from './config/arena';
+import { getServerUrl } from './config/network';
 import {
   sanitizeCharacterType,
   MSG_SELECT_CHARACTER,
@@ -98,8 +99,7 @@ export class NetworkManager {
     this.combatEffects = combatEffects;
     this.world = world;
 
-    const hostname = window.location.hostname || 'localhost';
-    this.client = new Colyseus.Client('ws://' + hostname + ':2567');
+    this.client = new Colyseus.Client(getServerUrl());
   }
 
   public async connect(): Promise<void> {
