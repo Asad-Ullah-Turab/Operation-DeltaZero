@@ -12,9 +12,9 @@ export function clamp(value: number, min: number, max: number): number {
 }
 
 /**
- * Sanitizes an unknown input into a valid CharacterType ('Merc' or 'Spie').
+ * Sanitizes an unknown input into a valid CharacterType ('Merc' or 'Spy').
  */
 export function sanitizeCharacterType(value: unknown): CharacterType {
-  return value === 'Merc' ? 'Merc' : 'Spie';
+  return value === 'Merc' ? 'Merc' : 'Spy';
 }
 

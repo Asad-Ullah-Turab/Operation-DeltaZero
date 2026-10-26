@@ -9,7 +9,7 @@ export class Player extends Schema {
   @type('number') z = 0;
   @type('number') rotationY = 0;
   @type('string') anim = 'Idle';
-  @type('string') characterType = 'Spie';
+  @type('string') characterType = 'Spy';
 }
 
 export class GameState extends Schema {

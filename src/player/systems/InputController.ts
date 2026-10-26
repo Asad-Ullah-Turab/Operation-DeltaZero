@@ -64,7 +64,7 @@ export class InputController {
       if (this.callbacks.getIsDead()) return;
       const charType = this.callbacks.getCharacterType();
 
-      if (e.code === 'KeyK' && charType === 'Spie') {
+      if (e.code === 'KeyK' && charType === 'Spy') {
         this.callbacks.onDebugDamage?.();
         return;
       }
@@ -75,7 +75,7 @@ export class InputController {
         this.jumpRequested = true;
       }
 
-      if (e.code === 'KeyC' && !e.repeat && charType === 'Spie') {
+      if (e.code === 'KeyC' && !e.repeat && charType === 'Spy') {
         this.callbacks.onToggleCrouch?.();
       }
 

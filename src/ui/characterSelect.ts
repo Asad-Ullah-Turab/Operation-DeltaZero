@@ -27,7 +27,7 @@ export function showCharacterSelectMenu(
   const handleSpy = (): void => {
     cleanup();
     if (menuEl) menuEl.classList.add('hidden');
-    onSelect('Spie');
+    onSelect('Spy');
   };
 
   const handleMerc = (): void => {

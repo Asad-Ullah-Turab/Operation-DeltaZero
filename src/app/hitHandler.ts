@@ -38,13 +38,13 @@ export function setupHitHandler(
     ).userData;
 
     if (data.isLocal && data.player) {
-      if (data.player.characterType === 'Spie') {
+      if (data.player.characterType === 'Spy') {
         const zone = data.player.classifyHitZone(event.hitPoint);
         const damage = getDamageForHitZone(zone);
         data.player.takeDamage(damage, zone);
       }
     } else if (data.isRemote && data.sessionId && data.remotePlayer) {
-      if (data.remotePlayer.characterType === 'Spie') {
+      if (data.remotePlayer.characterType === 'Spy') {
         const zone = data.remotePlayer.visual.getHitZone
           ? data.remotePlayer.visual.getHitZone(event.hitPoint)
           : 'torso';

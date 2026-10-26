@@ -28,7 +28,7 @@ export function createRemoteVisual(
     );
   }
   return createSpyVisual(
-    `remote_spie_${sessionId}`,
+    `remote_spy_${sessionId}`,
     scene,
     assets.spyContainer
   );

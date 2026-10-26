@@ -354,7 +354,7 @@ export function createSpyVisual(
 
   return {
     root,
-    characterType: 'Spie',
+    characterType: 'Spy',
     muzzleNode: null,
     muzzleFlashMesh: null,
     playAnimation,

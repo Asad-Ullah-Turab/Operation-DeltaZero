@@ -38,7 +38,7 @@ export function registerCharacterHandlers(room: Room<GameState>): void {
       const player = room.state.players.get(client.sessionId);
       if (!player || typeof data !== 'object' || data === null) return;
 
-      if (data.characterType === 'Merc' || data.characterType === 'Spie') {
+      if (data.characterType === 'Merc' || data.characterType === 'Spy') {
         player.characterType = data.characterType;
       }
       if (

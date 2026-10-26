@@ -35,7 +35,7 @@ export function registerMovementHandlers(room: Room<GameState>): void {
       if (typeof data.anim === 'string' && data.anim.length <= 32) {
         player.anim = data.anim;
       }
-      if (data.characterType === 'Merc' || data.characterType === 'Spie') {
+      if (data.characterType === 'Merc' || data.characterType === 'Spy') {
         player.characterType = data.characterType;
       }
     }
@@ -51,7 +51,7 @@ export function registerMovementHandlers(room: Room<GameState>): void {
     }
     if (data && typeof data.anim === 'string' && data.anim.length <= 32) {
       player.anim = data.anim;
-    } else if (player.characterType === 'Spie') {
+    } else if (player.characterType === 'Spy') {
       player.anim = 'Roll';
     }
   });

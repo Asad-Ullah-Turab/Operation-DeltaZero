@@ -85,7 +85,7 @@ export function setupLocalCharacter(
   }
 
   const visual = createSpyVisual(
-    'local_spie_player',
+    'local_spy_player',
     scene,
     assets.spyContainer
   );
@@ -118,7 +118,7 @@ export function applyRespawnCharacterType(
   healthController: HealthController,
   weaponController: WeaponController
 ): void {
-  if (selectedType === 'Spie') {
+  if (selectedType === 'Spy') {
     setHealthHudVisible(true);
     setAmmoHudVisible(false);
     setCrosshairVisible(false);
