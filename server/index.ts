@@ -3,7 +3,7 @@ import cors from 'cors';
 import { createServer } from 'http';
 import * as colyseusPkg from 'colyseus';
 import type { Server as ServerType } from 'colyseus';
-import { GameRoom } from './GameRoom';
+import { GameRoom } from './rooms/GameRoom';
 
 const { Server } = ((colyseusPkg as unknown as { default?: typeof colyseusPkg }).default ??
   colyseusPkg) as { Server: typeof ServerType };
