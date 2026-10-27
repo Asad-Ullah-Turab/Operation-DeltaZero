@@ -5,4 +5,5 @@
 export * from './staticPose';
 export * from './createMercVisual';
 export * from './createMercWorldVisual';
+export * from './mercWeaponPose';
 

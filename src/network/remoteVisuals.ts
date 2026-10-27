@@ -24,7 +24,8 @@ export function createRemoteVisual(
     return createMercWorldVisual(
       `remote_merc_${sessionId}`,
       scene,
-      assets.mercenaryContainer
+      assets.mercenaryContainer,
+      assets.weaponM4A1Container
     );
   }
   return createSpyVisual(

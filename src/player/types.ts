@@ -15,7 +15,11 @@ export interface CharacterAssets {
   spyContainer: AssetContainer;
   mercContainer: AssetContainer;
   mercenaryContainer: AssetContainer;
+  weaponM4A1Container: AssetContainer;
 }
+
+export type MercAnimationName = 'idle-aiming' | 'walking' | 'shooting';
+
 
 export interface NetworkShotEvent {
   originX: number;

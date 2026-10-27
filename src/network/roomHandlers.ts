@@ -61,6 +61,7 @@ function bindShootHandler(
         remote.visual.muzzleNode.computeWorldMatrix(true);
         shotOrigin = remote.visual.muzzleNode.getAbsolutePosition().clone();
       }
+      remote.visual.playAnimation('shooting');
     }
 
     const shotDir = new Vector3(payload.dirX, payload.dirY, payload.dirZ);

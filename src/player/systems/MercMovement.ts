@@ -103,12 +103,12 @@ export function updateMercFirstPerson(
     moveDirScratch.subtractInPlace(rightScratch);
   }
 
-  const currentAnim = visual.getCurrentAnimation();
+  const visualAnim = visual.getCurrentAnimation();
   const canAimOrFire =
-    currentAnim !== 'Reload' &&
-    currentAnim !== 'Draw' &&
-    currentAnim !== 'Hide' &&
-    currentAnim !== 'Hidden';
+    visualAnim !== 'Reload' &&
+    visualAnim !== 'Draw' &&
+    visualAnim !== 'Hide' &&
+    visualAnim !== 'Hidden';
 
   const wantsAds = canAimOrFire && (isAdsHeld || isAdsToggled);
   const isCrouching = Boolean(
@@ -161,7 +161,7 @@ export function updateMercFirstPerson(
   const pos = body.translation();
   if (pos.y < -15) {
     onSetSpawnPosition(0, 3, 0, rotationY);
-    return { wasGrounded, currentAnim };
+    return { wasGrounded, currentAnim: visualAnim };
   }
 
   // Sync collision root
@@ -207,7 +207,7 @@ export function updateMercFirstPerson(
     velY: body.linvel().y,
     lookDeltaX,
     lookDeltaY,
-    currentAnim,
+    currentAnim: visualAnim,
     pos,
     pitchX,
     rotationY,
@@ -218,6 +218,13 @@ export function updateMercFirstPerson(
   const deltaDecay = Math.min(1.0, dtSeconds * 28.0);
   onDecayLookDeltas(deltaDecay);
 
-  return { wasGrounded, currentAnim };
+  const networkAnim =
+    weaponController.fireCooldown > 0
+      ? 'shooting'
+      : isMovingHorizontally
+        ? 'walking'
+        : 'idle-aiming';
+
+  return { wasGrounded, currentAnim: networkAnim };
 }
 

@@ -38,7 +38,7 @@ export class RemotePlayerManager {
     visual.root.position.set(player.x, player.y, player.z);
     visual.root.rotation.y = player.rotationY;
 
-    const defaultAnim = charType === 'Merc' ? 'Draw' : 'Idle';
+    const defaultAnim = charType === 'Merc' ? 'idle-aiming' : 'Idle';
     visual.playAnimation(player.anim ?? defaultAnim);
 
     let remoteBody: RAPIER.RigidBody | undefined;
@@ -146,7 +146,12 @@ export class RemotePlayerManager {
       }
 
       if (remote.characterType === 'Merc') {
-        remote.visual.playAnimation(remote.targetAnim || 'Idle');
+        const isMoving = distSq > 0.002 || remote.targetAnim === 'walking';
+        let animToPlay = remote.targetAnim;
+        if (!animToPlay || animToPlay === 'Idle' || animToPlay === 'idle-aiming' || animToPlay === 'walking') {
+          animToPlay = isMoving ? 'walking' : 'idle-aiming';
+        }
+        remote.visual.playAnimation(animToPlay);
       } else {
         const animToPlay =
           remote.targetAnim || (distSq > 0.002 ? 'Walk' : 'Idle');

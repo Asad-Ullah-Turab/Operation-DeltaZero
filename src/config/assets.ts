@@ -10,3 +10,10 @@ export const CHARACTER_ASSET_FILES = {
   MERCENARY: 'mercenary.glb',
 } as const;
 
+export const WEAPON_ASSET_BASE_PATH = './assets/weapons/';
+
+export const WEAPON_ASSET_FILES = {
+  M4A1: 'm4a1.glb',
+} as const;
+
+
